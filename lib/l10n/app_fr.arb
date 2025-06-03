@@ -1,0 +1,17 @@
+{
+  "@@locale": "fr",
+  "settings": "Paramètres",
+  "downloadQuality": "Qualité de téléchargement",
+  "wifiOnlyDownloads": "Téléchargements Wi-Fi uniquement",
+  "playbackQuality": "Qualité de lecture",
+  "subtitles": "Sous-titres",
+  "language": "Langue",
+  "autoPlayTrailers": "Lecture automatique des bandes-annonces",
+  "notifications": "Notifications",
+  "parentalControl": "Contrôle parental",
+  "dataSaverMode": "Mode économie de données",
+  "clearCache": "Vider le cache",
+  "cacheSize": "Taille du cache",
+  "cacheCleared": "Cache vidé",
+  "backgroundColor": "Couleur d’arrière-plan"
+}

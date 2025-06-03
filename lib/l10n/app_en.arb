@@ -1,0 +1,17 @@
+{
+  "@@locale": "en",
+  "settings": "Settings",
+  "downloadQuality": "Download Quality",
+  "wifiOnlyDownloads": "Wi-Fi Only Downloads",
+  "playbackQuality": "Playback Quality",
+  "subtitles": "Subtitles",
+  "language": "Language",
+  "autoPlayTrailers": "Auto-Play Trailers",
+  "notifications": "Notifications",
+  "parentalControl": "Parental Control",
+  "dataSaverMode": "Data Saver Mode",
+  "clearCache": "Clear Cache",
+  "cacheSize": "Cache Size",
+  "cacheCleared": "Cache cleared",
+  "backgroundColor": "Background Color"
+}

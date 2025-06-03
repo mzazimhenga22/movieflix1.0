@@ -1,0 +1,133 @@
+name: movie_app
+description: A simple movie app with trending and recommended movies.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.7.0-323.0.dev <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  # Networking
+  http: ^1.3.0
+  html: ^0.15.4
+  universal_html: ^2.2.4
+
+  # UI & Images
+  cached_network_image: ^3.4.1
+  cupertino_icons: ^1.0.6
+  carousel_slider: ^4.2.1
+  intl: ^0.19.0
+  google_fonts: ^6.1.0
+  emoji_picker_flutter: ^1.6.2
+  shimmer: ^2.0.0
+
+  # Video & Media
+  video_player: ^2.7.0
+  chewie: ^1.11.3
+  youtube_player_flutter: ^9.1.1
+  flutter_sound: ^9.2.13
+  just_audio: ^0.9.36
+
+  # Mongo DB
+  mongo_dart: ^0.10.0
+
+  # Device Features
+  screen_brightness: ^2.1.0
+  image_picker: ^1.1.2
+  permission_handler: ^12.0.0+1
+  path_provider: ^2.1.5
+  path: ^1.9.0
+  file_picker: ^10.1.2
+  logging: ^1.2.0
+  logger: ^2.0.2
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  dio: ^5.8.0+1
+  uuid: ^4.5.1
+  flutter_image_compress: ^1.1.0
+  agora_rtc_engine: ^6.2.0
+  encrypt: ^5.0.3
+  flutter_local_notifications: ^17.0.0
+
+
+  # Storage & Database
+  shared_preferences: ^2.5.3
+  sqflite: ^2.4.1
+  sembast: 3.8.1-5
+  sembast_web: 2.4.0+4
+  device_info_plus: ^9.0.3
+
+  # Firebase
+  firebase_core: ^3.13.0
+  firebase_auth: ^5.5.2
+  firebase_auth_web: ^5.14.2
+  google_sign_in: ^6.2.1
+  cloud_firestore: ^5.6.6
+  firebase_analytics: ^11.4.5
+  firebase_messaging: ^15.2.5
+  firebase_app_check: ^0.3.2
+  firebase_remote_config: ^5.4.3
+  firebase_storage: ^12.4.5
+  firebase_database: ^11.3.5
+  firebase_crashlytics: ^4.3.5
+  firebase_performance: ^0.10.1
+  cloud_functions: ^5.4.0
+  supabase_flutter: ^2.0.0
+  dartz: ^0.10.0
+
+  # Web & Sharing
+  webview_flutter: ^4.11.0
+  flutter_inappwebview: ^6.1.5
+  share_plus: ^10.1.4
+  shelf: ^1.4.2
+  shelf_static: ^1.1.2
+
+  # State Management
+  provider: ^6.1.4
+  sensors_plus: ^6.1.1
+  visibility_detector: ^0.4.0+2
+
+  # Downloads
+  flutter_downloader: ^1.12.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
+  very_good_analysis: ^7.0.0
+  flutter_launcher_icons: ^0.14.3
+
+flutter:
+  uses-material-design: true
+  generate: true  # ✅ Enables localization generation
+  assets:
+    - assets/icon/movieflixiconv1.png
+    - assets/profile1.jpg
+    - assets/profile2.jpg
+    - assets/profile3.webp
+    - assets/profile4.jpg
+    - assets/profile5.jpg
+    - assets/background1.jpg
+    - assets/background2.jpg
+    - assets/background3.webp
+    - assets/background4.jpg
+    - assets/background5.jpg
+    - assets/googlelogo1.png
+    - assets/marketplace_banner.png
+    - assets/icon/indiefilm.jpg
+    - assets/icon/premierticket.jpg
+    - assets/icon/movieposter.jpg
+    - assets/cinema.jpg
+
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon/movieflixiconv1.png"
+  adaptive_icon_background: "#ffffff"
+  adaptive_icon_foreground: "assets/icon/movieflixiconv1.png"
