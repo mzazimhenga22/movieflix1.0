@@ -18,7 +18,6 @@ import 'dart:ui';
 import 'dart:async';
 import 'dart:typed_data';
 import 'package:universal_html/html.dart' as html;
-import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'stories.dart';
 import 'messages_screen.dart';
 import 'search_screen.dart';
@@ -28,6 +27,7 @@ import 'streak_section.dart';
 import 'notifications_section.dart';
 import 'chat_screen.dart';
 import 'package:video_player/video_player.dart' as vp;
+import 'package:path/path.dart' as p;
 
 class VideoPlayer extends StatefulWidget {
   final String videoUrl;
@@ -66,8 +66,7 @@ class _VideoPlayerState extends State<VideoPlayer> {
           }).catchError((error) {
             debugPrint('Error initializing video: $error');
           });
-    _controller.setLooping(
-        true); // Fixed: Replaced setLoop - STREAMing with setLooping
+    _controller.setLooping(true);
   }
 
   @override
@@ -304,54 +303,62 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
       dynamic mediaFile, String type, BuildContext context) async {
     try {
       final mediaId = const Uuid().v4();
-      final filePath = 'media/$mediaId.${type == 'photo' ? 'jpg' : 'mp4'}';
+      String filePath;
+      String contentType;
 
-      if (mediaFile is XFile) {
-        final file = File(mediaFile.path);
-        int fileSizeInBytes = await file.length();
-        debugPrint('Original size (mobile): ${fileSizeInBytes / 1024} KB');
-        if (type == 'photo') {
-          if (fileSizeInBytes > 2 * 1024 * 1024) {
+      if (kIsWeb) {
+        if (mediaFile is html.File) {
+          final fileSizeInBytes = mediaFile.size;
+          if (type == 'photo' && fileSizeInBytes > 5 * 1024 * 1024) {
             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                content: Text("Image too large, compressing...")));
-            final File? compressedFile = // Fixed: Changed XFile? to File?
-                await FlutterImageCompress.compressAndGetFile(
-              file.path,
-              '${file.path}_compressed.jpg',
-              minHeight: 600,
-              minWidth: 600,
-              quality: 70,
-              format: CompressFormat.jpeg,
-            );
-            if (compressedFile == null) {
-              throw Exception('Compression failed');
-            }
-            fileSizeInBytes = await compressedFile.length();
-            debugPrint(
-                'Compressed size (mobile): ${fileSizeInBytes / 1024} KB');
-            await _supabase.storage.from('feeds').upload(
-                  filePath,
-                  compressedFile,
-                  fileOptions: const FileOptions(contentType: 'image/jpeg'),
-                );
-          } else {
-            await _supabase.storage.from('feeds').upload(
-                  filePath,
-                  file,
-                  fileOptions: const FileOptions(contentType: 'image/jpeg'),
-                );
+                content: Text("Image too large, max 5MB allowed")));
+            return 'https://via.placeholder.com/150';
+          } else if (type == 'video' && fileSizeInBytes > 20 * 1024 * 1024) {
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                content: Text("Video too large, max 20MB allowed")));
+            return 'https://via.placeholder.com/150';
           }
+          final extension = mediaFile.name.split('.').last.toLowerCase();
+          filePath = 'media/$mediaId.$extension';
+          contentType = mediaFile.type;
+          final reader = html.FileReader();
+          reader.readAsArrayBuffer(mediaFile);
+          await reader.onLoad.first;
+          Uint8List bytes = reader.result as Uint8List;
+          await _supabase.storage.from('feeds').uploadBinary(
+                filePath,
+                bytes,
+                fileOptions: FileOptions(contentType: contentType),
+              );
         } else {
-          // Assuming video handling follows
+          debugPrint('Invalid file type for web platform');
+          return 'https://via.placeholder.com/150';
+        }
+      } else {
+        if (mediaFile is XFile) {
+          final file = File(mediaFile.path);
+          int fileSizeInBytes = await file.length();
+          if (type == 'photo' && fileSizeInBytes > 5 * 1024 * 1024) {
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                content: Text("Image too large, max 5MB allowed")));
+            return 'https://via.placeholder.com/150';
+          } else if (type == 'video' && fileSizeInBytes > 20 * 1024 * 1024) {
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                content: Text("Video too large, max 20MB allowed")));
+            return 'https://via.placeholder.com/150';
+          }
+          final extension = p.extension(mediaFile.path).replaceFirst('.', '');
+          filePath = 'media/$mediaId.$extension';
+          contentType = getMimeType(extension);
           await _supabase.storage.from('feeds').upload(
                 filePath,
                 file,
-                fileOptions: const FileOptions(contentType: 'video/mp4'),
+                fileOptions: FileOptions(contentType: contentType),
               );
+        } else {
+          debugPrint('Invalid file type');
+          return 'https://via.placeholder.com/150';
         }
-      } else {
-        debugPrint('Invalid file type');
-        return 'https://via.placeholder.com/150';
       }
 
       final url = _supabase.storage.from('feeds').getPublicUrl(filePath);
@@ -359,6 +366,20 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
     } catch (e) {
       debugPrint('Error uploading media: $e');
       return 'https://via.placeholder.com/150';
+    }
+  }
+
+  String getMimeType(String extension) {
+    switch (extension.toLowerCase()) {
+      case 'jpg':
+      case 'jpeg':
+        return 'image/jpeg';
+      case 'png':
+        return 'image/png';
+      case 'mp4':
+        return 'video/mp4';
+      default:
+        return 'application/octet-stream';
     }
   }
 
@@ -1625,5 +1646,3 @@ class NewChatScreenState extends State<NewChatScreen> {
     );
   }
 }
-
-
