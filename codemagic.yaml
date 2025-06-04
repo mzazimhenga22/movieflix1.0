@@ -1,22 +1,27 @@
 workflows:
-  default-workflow:
-    name: Default Workflow
+  build-android:
+    name: Build Android
     environment:
       flutter: stable
     triggering:
       events:
         - push
-        - pull_request
     scripts:
-      # Install Dart/Flutter dependencies
       - name: Get dependencies
-        script: |
-          flutter pub get
+        script: flutter pub get
 
-      # Build Android APK
-      - name: Build Android APK
+      - name: Patch flutter_image_compress for AGP 8
         script: |
-          flutter build apk --release
+          PLUGIN_DIR="$HOME/.pub-cache/hosted/pub.dev/flutter_image_compress-1.1.0/android"
+          if grep -q "namespace" "$PLUGIN_DIR/build.gradle"; then
+            echo "Namespace already set."
+          else
+            echo "Adding namespace to flutter_image_compress..."
+            sed -i '/^android {/a \    namespace "com.flutter.image_compress"' "$PLUGIN_DIR/build.gradle"
+          fi
+
+      - name: Build APK
+        script: flutter build apk --release
 
     artifacts:
       - build/app/outputs/flutter-apk/app-release.apk
