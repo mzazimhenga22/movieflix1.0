@@ -1318,19 +1318,19 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                       ),
                       if (_showEmojiPicker)
                         SizedBox(
-                          height: 250,
-                          child: EmojiPicker(
-                            onEmojiSelected: (category, emoji) {
-                              _controller.text += emoji.emoji;
-                              _saveDraft(_controller.text);
-                            },
-                            config: const Config(
-                                columns: 7,
-                                emojiSizeMax: 32,
-                                bgColor: Colors.white,
-                                indicatorColor: Colors.deepPurple),
-                          ),
-                        ),
+  height: 250,
+  child: EmojiPicker(
+    onEmojiSelected: (category, emoji) {
+      _controller.text += emoji.emoji;
+      _saveDraft(_controller.text);
+    },
+    config: const Config(
+      emojiSizeMax: 32,
+      bgColor: Colors.white,
+      indicatorColor: Colors.deepPurple,
+    ),
+  ),
+)
                     ],
                   ),
                 ),
