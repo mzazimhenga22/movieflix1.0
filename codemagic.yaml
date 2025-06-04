@@ -5,35 +5,31 @@ workflows:
       flutter: stable
 
     scripts:
-      # 1. Pub get
       - name: Get dependencies
         script: flutter pub get
 
-      # 2. Add namespace required by AGP 8
       - name: Patch flutter_image_compress for AGP 8
         script: |
           PLUGIN_DIR="$HOME/.pub-cache/hosted/pub.dev/flutter_image_compress-1.1.0/android"
           GRADLE_FILE="$PLUGIN_DIR/build.gradle"
 
           echo "Adding namespace to flutter_image_compress…"
-          # only if it’s not there already
           if ! grep -q '^ *namespace ' "$GRADLE_FILE"; then
-            sed -i '/^android {/a namespace "com.flutter.image_compress"' "$GRADLE_FILE"
+            sed -i '' '/^android {/a\
+namespace "com.flutter.image_compress"
+' "$GRADLE_FILE"
           else
             echo "Namespace already present."
           fi
 
-      # 3. Bump Kotlin version used by that plugin
       - name: Update Kotlin version in flutter_image_compress
         script: |
           GRADLE_FILE="$HOME/.pub-cache/hosted/pub.dev/flutter_image_compress-1.1.0/android/build.gradle"
-          sed -i 's/kotlin-gradle-plugin:1\.3\.50/kotlin-gradle-plugin:1.7.10/' "$GRADLE_FILE"
+          sed -i '' 's/kotlin-gradle-plugin:1\.3\.50/kotlin-gradle-plugin:1.7.10/' "$GRADLE_FILE"
 
-      # 4. Force the main project to use Kotlin 1.7.10 too
       - name: Force Kotlin version compatibility
         script: echo "kotlin.version=1.7.10" >> android/gradle.properties
 
-      # 5. Build the release APK
       - name: Build release APK
         script: flutter build apk --release
 
