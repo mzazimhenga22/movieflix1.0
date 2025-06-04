@@ -13,12 +13,21 @@ workflows:
       - name: Patch flutter_image_compress for AGP 8
         script: |
           PLUGIN_DIR="$HOME/.pub-cache/hosted/pub.dev/flutter_image_compress-1.1.0/android"
-          if grep -q "namespace" "$PLUGIN_DIR/build.gradle"; then
+          GRADLE_FILE="$PLUGIN_DIR/build.gradle"
+          if grep -q "namespace" "$GRADLE_FILE"; then
             echo "Namespace already set."
           else
             echo "Adding namespace to flutter_image_compress..."
-            sed -i '/^android {/a \    namespace "com.flutter.image_compress"' "$PLUGIN_DIR/build.gradle"
+            sed -i '' '/^android {/a\
+              namespace "com.flutter.image_compress"
+            ' "$GRADLE_FILE"
           fi
+
+      - name: Build APK
+        script: flutter build apk --release
+
+    artifacts:
+      - build/app/outputs/flutter-apk/app-release.apk
 
       - name: Build APK
         script: flutter build apk --release
