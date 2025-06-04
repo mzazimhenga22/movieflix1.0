@@ -1,36 +1,27 @@
-workflows:
-  build-android:
-    name: Build Android
-    environment:
-      flutter: stable
-    triggering:
-      events:
-        - push
-    scripts:
-      - name: Get dependencies
-        script: flutter pub get
+scripts:
+  - name: Get dependencies
+    script: flutter pub get
 
-      - name: Patch flutter_image_compress for AGP 8
-        script: |
-          PLUGIN_DIR="$HOME/.pub-cache/hosted/pub.dev/flutter_image_compress-1.1.0/android"
-          GRADLE_FILE="$PLUGIN_DIR/build.gradle"
-          if grep -q "namespace" "$GRADLE_FILE"; then
-            echo "Namespace already set."
-          else
-            echo "Adding namespace to flutter_image_compress..."
-            sed -i '' '/^android {/a\
-              namespace "com.flutter.image_compress"
-            ' "$GRADLE_FILE"
-          fi
+  - name: Patch flutter_image_compress for AGP 8
+    script: |
+      PLUGIN_DIR="$HOME/.pub-cache/hosted/pub.dev/flutter_image_compress-1.1.0/android"
+      GRADLE_FILE="$PLUGIN_DIR/build.gradle"
+      if grep -q "namespace" "$GRADLE_FILE"; then
+        echo "Namespace already set."
+      else
+        echo "Adding namespace to flutter_image_compress..."
+        sed -i '' '/^android {/a\
+          namespace "com.flutter.image_compress"
+        ' "$GRADLE_FILE"
+      fi
 
-      - name: Build APK
-        script: flutter build apk --release
+  - name: Update Kotlin version in flutter_image_compress
+    script: |
+      sed -i '' 's/kotlin-gradle-plugin:1.3.50/kotlin-gradle-plugin:1.7.10/' "$HOME/.pub-cache/hosted/pub.dev/flutter_image_compress-1.1.0/android/build.gradle"
 
-    artifacts:
-      - build/app/outputs/flutter-apk/app-release.apk
+  - name: Force Kotlin version compatibility
+    script: echo "kotlin.version=1.7.10" >> android/gradle.properties
 
-      - name: Build APK
-        script: flutter build apk --release
+  - name: Build APK
+    script: flutter build apk --release
 
-    artifacts:
-      - build/app/outputs/flutter-apk/app-release.apk
