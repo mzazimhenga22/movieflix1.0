@@ -3,8 +3,6 @@ workflows:
     name: Build Android Release
     environment:
       flutter: stable
-      android_signing:
-        - your_signing_key  # Replace with your actual key if needed
 
     scripts:
       - name: Get dependencies
