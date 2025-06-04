@@ -1,27 +1,38 @@
-scripts:
-  - name: Get dependencies
-    script: flutter pub get
+workflows:
+  android-release:
+    name: Build Android Release
+    environment:
+      flutter: stable
+      android_signing:
+        - your_signing_key  # Replace with your actual signing key
+    scripts:
+      - name: Get dependencies
+        script: flutter pub get
 
-  - name: Patch flutter_image_compress for AGP 8
-    script: |
-      PLUGIN_DIR="$HOME/.pub-cache/hosted/pub.dev/flutter_image_compress-1.1.0/android"
-      GRADLE_FILE="$PLUGIN_DIR/build.gradle"
-      if grep -q "namespace" "$GRADLE_FILE"; then
-        echo "Namespace already set."
-      else
-        echo "Adding namespace to flutter_image_compress..."
-        sed -i '' '/^android {/a\
-          namespace "com.flutter.image_compress"
-        ' "$GRADLE_FILE"
-      fi
+      - name: Patch flutter_image_compress for AGP 8
+        script: |
+          PLUGIN_DIR="$CM_HOME/.pub-cache/hosted/pub.dev/flutter_image_compress-1.1.0/android"
+          GRADLE_FILE="$PLUGIN_DIR/build.gradle"
 
-  - name: Update Kotlin version in flutter_image_compress
-    script: |
-      sed -i '' 's/kotlin-gradle-plugin:1.3.50/kotlin-gradle-plugin:1.7.10/' "$HOME/.pub-cache/hosted/pub.dev/flutter_image_compress-1.1.0/android/build.gradle"
+          echo "Adding namespace..."
+          sed -i '/^android {/a\
+    namespace "com.flutter.image_compress"
+          ' "$GRADLE_FILE"
 
-  - name: Force Kotlin version compatibility
-    script: echo "kotlin.version=1.7.10" >> android/gradle.properties
+      - name: Update Kotlin version in flutter_image_compress
+        script: |
+          GRADLE_FILE="$CM_HOME/.pub-cache/hosted/pub.dev/flutter_image_compress-1.1.0/android/build.gradle"
+          echo "Updating Kotlin version..."
+          sed -i 's/kotlin-gradle-plugin:1.3.50/kotlin-gradle-plugin:1.7.10/' "$GRADLE_FILE"
 
-  - name: Build APK
-    script: flutter build apk --release
+      - name: Force Kotlin version compatibility in main project
+        script: |
+          echo "kotlin.version=1.7.10" >> android/gradle.properties
+
+      - name: Build release APK
+        script: flutter build apk --release
+
+    artifacts:
+      - build/app/outputs/flutter-apk/app-release.apk
+
 
