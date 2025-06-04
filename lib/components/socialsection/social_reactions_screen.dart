@@ -360,7 +360,7 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
             if (fileSizeInBytes > 2 * 1024 * 1024) {
               ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                   content: Text("Image too large, compressing...")));
-              final File? compressedFile =
+              final File? compressedXFile =
                   await FlutterImageCompress.compressAndGetFile(
                 file.path,
                 '${file.path}_compressed.jpg',
@@ -369,7 +369,10 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
                 quality: 70,
                 format: CompressFormat.jpeg,
               );
-              if (compressedFile == null) throw Exception('Compression failed');
+              if (compressedXFile == null)
+                throw Exception('Compression failed');
+              final File compressedFile =
+                  File(compressedXFile.path); // Convert XFile to File
               fileSizeInBytes = await compressedFile.length();
               debugPrint(
                   'Compressed size (mobile): ${fileSizeInBytes / 1024} KB');
@@ -713,7 +716,8 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
                 ),
               ),
             );
-            mediaUrl = await uploadMedia(result['media'], result['mediaType']!, context);
+            mediaUrl = await uploadMedia(
+                result['media'], result['mediaType']!, context);
             if (mediaUrl == 'https://via.placeholder.com/150') {
               debugPrint('Failed to upload review media');
             }
@@ -1677,3 +1681,4 @@ class NewChatScreenState extends State<NewChatScreen> {
     );
   }
 }
+
