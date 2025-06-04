@@ -8,31 +8,10 @@ workflows:
       - name: Get dependencies
         script: flutter pub get
 
-      - name: Patch flutter_image_compress for AGP 8
-        script: |
-          PLUGIN_DIR="$HOME/.pub-cache/hosted/pub.dev/flutter_image_compress-1.1.0/android"
-          GRADLE_FILE="$PLUGIN_DIR/build.gradle"
-
-          echo "Adding namespace to flutter_image_compress…"
-          if ! grep -q '^ *namespace ' "$GRADLE_FILE"; then
-            awk '/^android {/ { print; print "    namespace \"com.flutter.image_compress\""; next } 1' "$GRADLE_FILE" > "$GRADLE_FILE.tmp" && mv "$GRADLE_FILE.tmp" "$GRADLE_FILE"
-          else
-            echo "Namespace already present."
-          fi
-
-      - name: Force Kotlin version to 1.9.24 in flutter_image_compress
-        script: |
-          GRADLE_FILE="$HOME/.pub-cache/hosted/pub.dev/flutter_image_compress-1.1.0/android/build.gradle"
-          echo "Replacing Kotlin version with 1.9.24..."
-          sed -i.bak 's|org.jetbrains.kotlin:kotlin-gradle-plugin:[^"]*|org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.24|g' "$GRADLE_FILE"
-          rm "$GRADLE_FILE.bak"
-
-      - name: Enforce Kotlin version compatibility
-        script: echo "kotlin.version=1.9.24" >> android/gradle.properties
-
       - name: Build release APK
         script: flutter build apk --release
 
     artifacts:
       - build/app/outputs/flutter-apk/app-release.apk
+
 
