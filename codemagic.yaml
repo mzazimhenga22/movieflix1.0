@@ -4,7 +4,8 @@ workflows:
     environment:
       flutter: stable
       android_signing:
-        - your_signing_key  # Replace with your actual signing key
+        - your_signing_key  # Replace with your actual key if needed
+
     scripts:
       - name: Get dependencies
         script: flutter pub get
@@ -16,8 +17,7 @@ workflows:
 
           echo "Adding namespace..."
           sed -i '/^android {/a\
-    namespace "com.flutter.image_compress"
-          ' "$GRADLE_FILE"
+          \  namespace "com.flutter.image_compress"' "$GRADLE_FILE"
 
       - name: Update Kotlin version in flutter_image_compress
         script: |
