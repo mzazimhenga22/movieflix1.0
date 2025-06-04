@@ -315,27 +315,32 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
             if (bytes.lengthInBytes > 2 * 1024 * 1024) {
               ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                   content: Text("Image too large, compressing...")));
-              bytes = await FlutterImageCompress.compressWithList(bytes,
-                  minHeight: 600,
-                  minWidth: 600,
-                  quality: 70,
-                  format: CompressFormat.jpeg);
-              debugPrint(
-                  'Compressed size (web): ${bytes.lengthInBytes / 1024} KB');
+              bytes = await FlutterImageCompress.compressWithList(
+                bytes,
+                minHeight: 600,
+                minWidth: 600,
+                quality: 70,
+                format: CompressFormat.jpeg,
+              );
+              debugPrint('Compressed size (web): ${bytes.lengthInBytes / 1024} KB');
             }
-            if (bytes.lengthInBytes > 5 * 1024 * 1024)
-              throw Exception(
-                  'Compressed image still too large: ${bytes.lengthInBytes / 1024} KB');
-            await _supabase.storage.from('feeds').uploadBinary(filePath, bytes,
-                fileOptions: const FileOptions(contentType: 'image/jpeg'));
+            if (bytes.lengthInBytes > 5 * 1024 * 1024) {
+              throw Exception('Compressed image still too large: ${bytes.lengthInBytes / 1024} KB');
+            }
+            await _supabase.storage.from('feeds').uploadBinary(
+              filePath, bytes,
+              fileOptions: const FileOptions(contentType: 'image/jpeg'),
+            );
           } else {
             if (bytes.lengthInBytes > 10 * 1024 * 1024) {
               ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                   content: Text("Video too large, max 10MB allowed")));
               return 'https://via.placeholder.com/150';
             }
-            await _supabase.storage.from('feeds').uploadBinary(filePath, bytes,
-                fileOptions: const FileOptions(contentType: 'video/mp4'));
+            await _supabase.storage.from('feeds').uploadBinary(
+              filePath, bytes,
+              fileOptions: const FileOptions(contentType: 'video/mp4'),
+            );
           }
         } else {
           debugPrint('Invalid file type for web platform');
@@ -343,33 +348,35 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
         }
       } else {
         if (mediaFile is XFile) {
-          final file = File(mediaFile.path);
+          final file = File(mediaFile.path); // Convert XFile to File
           int fileSizeInBytes = await file.length();
           debugPrint('Original size (mobile): ${fileSizeInBytes / 1024} KB');
           if (type == 'photo') {
             if (fileSizeInBytes > 2 * 1024 * 1024) {
               ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                   content: Text("Image too large, compressing...")));
-              final compressedFile =
-                  await FlutterImageCompress.compressAndGetFile(
-                      file.path, '${file.path}_compressed.jpg',
-                      minHeight: 600,
-                      minWidth: 600,
-                      quality: 70,
-                      format: CompressFormat.jpeg);
+              final File? compressedFile = await FlutterImageCompress.compressAndGetFile(
+                file.path, '${file.path}_compressed.jpg',
+                minHeight: 600,
+                minWidth: 600,
+                quality: 70,
+                format: CompressFormat.jpeg,
+              );
               if (compressedFile == null) throw Exception('Compression failed');
               fileSizeInBytes = await compressedFile.length();
-              debugPrint(
-                  'Compressed size (mobile): ${fileSizeInBytes / 1024} KB');
-              if (fileSizeInBytes > 5 * 1024 * 1024)
-                throw Exception(
-                    'Compressed image still too large: ${fileSizeInBytes / 1024} KB');
+              debugPrint('Compressed size (mobile): ${fileSizeInBytes / 1024} KB');
+              if (fileSizeInBytes > 5 * 1024 * 1024) {
+                throw Exception('Compressed image still too large: ${fileSizeInBytes / 1024} KB');
+              }
               await _supabase.storage.from('feeds').upload(
-                  filePath, compressedFile,
-                  fileOptions: const FileOptions(contentType: 'image/jpeg'));
+                filePath, compressedFile,
+                fileOptions: const FileOptions(contentType: 'image/jpeg'),
+              );
             } else {
-              await _supabase.storage.from('feeds').upload(filePath, file,
-                  fileOptions: const FileOptions(contentType: 'image/jpeg'));
+              await _supabase.storage.from('feeds').upload(
+                filePath, file,
+                fileOptions: const FileOptions(contentType: 'image/jpeg'),
+              );
             }
           } else {
             if (fileSizeInBytes > 10 * 1024 * 1024) {
@@ -377,8 +384,10 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
                   content: Text("Video too large, max 10MB allowed")));
               return 'https://via.placeholder.com/150';
             }
-            await _supabase.storage.from('feeds').upload(filePath, file,
-                fileOptions: const FileOptions(contentType: 'video/mp4'));
+            await _supabase.storage.from('feeds').upload(
+              filePath, file,
+              fileOptions: const FileOptions(contentType: 'video/mp4'),
+            );
           }
         } else {
           debugPrint('Invalid file type for mobile/desktop platform');
