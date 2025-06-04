@@ -20,13 +20,14 @@ workflows:
             echo "Namespace already present."
           fi
 
-      - name: Update Kotlin version in flutter_image_compress
+      - name: Patch flutter_image_compress Kotlin version to use project kotlin_version
         script: |
           GRADLE_FILE="$HOME/.pub-cache/hosted/pub.dev/flutter_image_compress-1.1.0/android/build.gradle"
-          sed -i '' 's/kotlin-gradle-plugin:1\.3\.50/kotlin-gradle-plugin:1.7.10/' "$GRADLE_FILE"
+          echo "Patching flutter_image_compress Kotlin version..."
+          awk '{gsub(/org.jetbrains.kotlin:kotlin-gradle-plugin:[0-9.]+/, "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"); print}' "$GRADLE_FILE" > "$GRADLE_FILE.tmp" && mv "$GRADLE_FILE.tmp" "$GRADLE_FILE"
 
       - name: Force Kotlin version compatibility
-        script: echo "kotlin.version=1.7.10" >> android/gradle.properties
+        script: echo "kotlin.version=1.9.24" >> android/gradle.properties
 
       - name: Build release APK
         script: flutter build apk --release
