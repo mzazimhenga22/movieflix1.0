@@ -14,8 +14,8 @@ workflows:
           GRADLE_FILE="$PLUGIN_DIR/build.gradle"
 
           echo "Adding namespace..."
-          sed -i '/^android {/a\
-          \  namespace "com.flutter.image_compress"' "$GRADLE_FILE"
+          sed -i '/^android {/a \\
+    namespace "com.flutter.image_compress"' "$GRADLE_FILE"
 
       - name: Update Kotlin version in flutter_image_compress
         script: |
@@ -32,5 +32,3 @@ workflows:
 
     artifacts:
       - build/app/outputs/flutter-apk/app-release.apk
-
-
