@@ -8,10 +8,18 @@ workflows:
       - name: Get dependencies
         script: flutter pub get
 
-      - name: Build release APK
-        script: flutter build apk --release
+      - name: Build split-architecture APKs with obfuscation
+        script: >
+          flutter build apk
+          --release
+          --obfuscate
+          --split-debug-info=build/symbols
+          --split-per-abi
 
     artifacts:
-      - build/app/outputs/flutter-apk/app-release.apk
+      - build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
+      - build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+      - build/app/outputs/flutter-apk/app-x86_64-release.apk
+      - build/symbols/**  # Optional: Save symbol files for stack traces
 
 
