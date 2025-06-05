@@ -1317,20 +1317,25 @@ class _IndividualChatScreenState extends State<IndividualChatScreen>
                                   onPressed: _sendMessage),
                         ],
                       ),
-                      if (_showEmojiPicker)
-                        SizedBox(
-                          height: 250,
-                          child: EmojiPicker(
-                            onEmojiSelected: (category, emoji) {
-                              _controller.text += emoji.emoji;
-                              _saveDraft(_controller.text);
-                            },
-                            config: Config(
-                              bgColor: Colors.white,
-                              iconColorSelected: Colors.deepPurple,
-                            ),
-                          ),
-                        )
+   if (_showEmojiPicker)
+  SizedBox(
+    height: 250,
+    child: EmojiPicker(
+      onEmojiSelected: (category, emoji) {
+        _controller.text += emoji.emoji;
+        _saveDraft(_controller.text);
+      },
+      config: Config(
+        emojiViewConfig: EmojiViewConfig(
+          backgroundColor: Colors.white,
+        ),
+        categoryViewConfig: CategoryViewConfig(
+          iconColorSelected: Colors.deepPurple,
+        ),
+      ),
+    ),
+  )
+
                     ],
                   ),
                 ),
