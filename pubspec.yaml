@@ -21,14 +21,13 @@ dependencies:
   cached_network_image: ^3.4.1
   cupertino_icons: ^1.0.6
   carousel_slider: ^4.2.1
-  intl: ^0.20.0
+  intl: ^0.19.0
   google_fonts: ^6.1.0
   emoji_picker_flutter: ^4.3.0
   shimmer: ^2.0.0
 
   # Video & Media
   video_player: ^2.7.0
-  chewie: ^1.11.3
   youtube_player_flutter: ^9.1.1
   flutter_sound: ^9.2.13
   just_audio: ^0.9.36
@@ -49,7 +48,6 @@ dependencies:
   hive_flutter: ^1.1.0
   dio: ^5.8.0+1
   uuid: ^4.5.1
-  flutter_image_compress: ^2.4.0
   agora_rtc_engine: ^6.2.0
   encrypt: ^5.0.3
   flutter_local_notifications: ^17.0.0
