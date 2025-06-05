@@ -1325,9 +1325,9 @@ class _IndividualChatScreenState extends State<IndividualChatScreen>
                               _controller.text += emoji.emoji;
                               _saveDraft(_controller.text);
                             },
-                            config: const Config(
+                            config: Config(
                               bgColor: Colors.white,
-                              indicatorColor: Colors.deepPurple,
+                              iconColorSelected: Colors.deepPurple,
                             ),
                           ),
                         )
