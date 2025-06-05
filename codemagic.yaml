@@ -5,6 +5,11 @@ workflows:
       flutter: stable
 
     scripts:
+      - name: Clean previous build and cache
+        script: |
+          flutter clean
+          flutter pub cache repair
+
       - name: Get dependencies
         script: flutter pub get
 
@@ -20,6 +25,5 @@ workflows:
       - build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
       - build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
       - build/app/outputs/flutter-apk/app-x86_64-release.apk
-      - build/symbols/**  # Optional: Save symbol files for stack traces
-
+      - build/symbols/**
 
