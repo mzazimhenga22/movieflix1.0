@@ -1002,329 +1002,342 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     return DateFormat('MMM d, yyyy').format(date);
   }
 
-@override
-Widget build(BuildContext context) {
-  List<Map<String, dynamic>> filteredMessages = _searchMessages();
-  List<Map<String, dynamic>> combinedItems = [
-    ...filteredMessages.map((m) {
-      String? repliedToText;
-      if (m['replied_to'] != null) {
-        final repliedMsg = _messages.firstWhere(
-          (msg) => msg['id'] == m['replied_to'],
-          orElse: () => {'message': 'Original message not found'},
-        );
-        try {
-          repliedToText = repliedMsg['type'] == 'text' && repliedMsg['iv'] != null
-              ? _encrypter.decrypt64(repliedMsg['message'],
-                  iv: encrypt.IV.fromBase64(repliedMsg['iv']))
-              : repliedMsg['message'].toString();
-        } catch (e) {
-          debugPrint('Error decrypting replied message ${m['replied_to']}: $e');
-          repliedToText = '[Decryption Failed]';
-        }
-      }
-      return {
-        'type': 'message',
-        'data': m,
-        'timestamp': DateTime.parse(m['created_at'].toString()),
-        'replied_to_text': repliedToText,
-      };
-    }),
-  ];
-  combinedItems.sort((a, b) => a['timestamp'].compareTo(b['timestamp']));
-
-  List<Widget> listWidgets = [];
-  for (int i = 0; i < combinedItems.length; i++) {
-    final item = combinedItems[i];
-    if (item['type'] == 'message') {
-      final DateTime currentDate = item['timestamp'];
-      if (i == 0 ||
-          (combinedItems[i - 1]['type'] == 'message' &&
-              !isSameDay(currentDate, combinedItems[i - 1]['timestamp']))) {
-        listWidgets.add(Container(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            alignment: Alignment.center,
-            child: Text(getHeaderText(currentDate),
-                style: const TextStyle(
-                    color: Colors.white70, fontWeight: FontWeight.bold))));
-      }
-      listWidgets.add(MessageWidget(
-        message: item['data'],
-        isMe: item['data']['sender_id'] == widget.currentUser['id'],
-        repliedToText: item['replied_to_text'],
-        onReply: () => _replyToMessage(_messages.indexOf(item['data'])),
-        onShare: () => _forwardMessage(item['data']),
-        onLongPress: () => _showMessageOptions(context, item['data']),
-        onTapOriginal: () {
-          final originalMessage = _messages.firstWhere(
-              (m) => m['id'] == item['data']['replied_to'],
-              orElse: () => {});
-          if (originalMessage.isNotEmpty) {
-            final index = _messages.indexOf(originalMessage);
-            if (index != -1) {
-              _scrollController.animateTo(index * 100.0,
-                  duration: const Duration(milliseconds: 300),
-                  curve: Curves.easeInOut);
-            }
+  @override
+  Widget build(BuildContext context) {
+    List<Map<String, dynamic>> filteredMessages = _searchMessages();
+    List<Map<String, dynamic>> combinedItems = [
+      ...filteredMessages.map((m) {
+        String? repliedToText;
+        if (m['replied_to'] != null) {
+          final repliedMsg = _messages.firstWhere(
+            (msg) => msg['id'] == m['replied_to'],
+            orElse: () => {'message': 'Original message not found'},
+          );
+          try {
+            repliedToText =
+                repliedMsg['type'] == 'text' && repliedMsg['iv'] != null
+                    ? _encrypter.decrypt64(repliedMsg['message'],
+                        iv: encrypt.IV.fromBase64(repliedMsg['iv']))
+                    : repliedMsg['message'].toString();
+          } catch (e) {
+            debugPrint(
+                'Error decrypting replied message ${m['replied_to']}: $e');
+            repliedToText = '[Decryption Failed]';
           }
-        },
-        onDelete: () => _deleteMessage(_messages.indexOf(item['data'])),
-        audioPlayer: _audioPlayer,
-        setCurrentlyPlaying: (id) => setState(() => _currentlyPlayingId = id),
-        currentlyPlayingId: _currentlyPlayingId,
-        encrypter: _encrypter,
-      ));
-    }
-  }
+        }
+        return {
+          'type': 'message',
+          'data': m,
+          'timestamp': DateTime.parse(m['created_at'].toString()),
+          'replied_to_text': repliedToText,
+        };
+      }),
+    ];
+    combinedItems.sort((a, b) => a['timestamp'].compareTo(b['timestamp']));
 
-  return Scaffold(
-    appBar: AppBar(
-      leading: Row(
-        children: [
-          IconButton(
-              icon: const Icon(Icons.arrow_back, color: Colors.white),
-              onPressed: () => Navigator.pop(context)),
-          const Icon(Icons.group, color: Colors.white),
-        ],
-      ),
-      leadingWidth: 80,
-      title: Text(widget.conversation['group_name'] ?? 'Group Chat'),
-      backgroundColor: Colors.deepPurple,
-      actions: [
-        IconButton(
-            icon: const Icon(Icons.call),
-            onPressed: () => _startCall(isVideo: false)),
-        IconButton(
-            icon: const Icon(Icons.video_call),
-            onPressed: () => _startCall(isVideo: true)),
-        PopupMenuButton<String>(
-          onSelected: (value) async {
-            if (value == 'change_background') {
-              final result = await Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (context) => ChatSettingsScreen(
-                          currentColor: _chatBgColor,
-                          currentImage: _chatBgImage)));
-              if (result != null && result is Map<String, dynamic>) {
-                _updateChatBackground(
-                    color: result['color'],
-                    imageUrl: result['image'],
-                    cinematicTheme: result['cinematicTheme']);
+    List<Widget> listWidgets = [];
+    for (int i = 0; i < combinedItems.length; i++) {
+      final item = combinedItems[i];
+      if (item['type'] == 'message') {
+        final DateTime currentDate = item['timestamp'];
+        if (i == 0 ||
+            (combinedItems[i - 1]['type'] == 'message' &&
+                !isSameDay(currentDate, combinedItems[i - 1]['timestamp']))) {
+          listWidgets.add(Container(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              alignment: Alignment.center,
+              child: Text(getHeaderText(currentDate),
+                  style: const TextStyle(
+                      color: Colors.white70, fontWeight: FontWeight.bold))));
+        }
+        listWidgets.add(MessageWidget(
+          message: item['data'],
+          isMe: item['data']['sender_id'] == widget.currentUser['id'],
+          repliedToText: item['replied_to_text'],
+          onReply: () => _replyToMessage(_messages.indexOf(item['data'])),
+          onShare: () => _forwardMessage(item['data']),
+          onLongPress: () => _showMessageOptions(context, item['data']),
+          onTapOriginal: () {
+            final originalMessage = _messages.firstWhere(
+                (m) => m['id'] == item['data']['replied_to'],
+                orElse: () => {});
+            if (originalMessage.isNotEmpty) {
+              final index = _messages.indexOf(originalMessage);
+              if (index != -1) {
+                _scrollController.animateTo(index * 100.0,
+                    duration: const Duration(milliseconds: 300),
+                    curve: Curves.easeInOut);
               }
-            } else if (value == 'search') {
-              setState(() {
-                _showSearch = !_showSearch;
-                if (!_showSearch) {
-                  _searchTerm = "";
-                  _searchController.clear();
-                }
-              });
             }
           },
-          itemBuilder: (context) => const [
-            PopupMenuItem<String>(
-                value: 'change_background', child: Text('Change Background')),
-            PopupMenuItem<String>(
-                value: 'search', child: Text('Search Messages')),
+          onDelete: () => _deleteMessage(_messages.indexOf(item['data'])),
+          audioPlayer: _audioPlayer,
+          setCurrentlyPlaying: (id) => setState(() => _currentlyPlayingId = id),
+          currentlyPlayingId: _currentlyPlayingId,
+          encrypter: _encrypter,
+        ));
+      }
+    }
+
+    return Scaffold(
+      appBar: AppBar(
+        leading: Row(
+          children: [
+            IconButton(
+                icon: const Icon(Icons.arrow_back, color: Colors.white),
+                onPressed: () => Navigator.pop(context)),
+            const Icon(Icons.group, color: Colors.white),
           ],
         ),
-      ],
-      bottom: _showSearch
-          ? PreferredSize(
-              preferredSize: const Size.fromHeight(48),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                child: TextField(
-                  controller: _searchController,
-                  onChanged: (value) => setState(() => _searchTerm = value),
-                  decoration: const InputDecoration(
-                    hintText: "Search messages...",
-                    fillColor: Colors.white,
-                    filled: true,
-                    prefixIcon: Icon(Icons.search),
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.all(Radius.circular(12)),
-                        borderSide: BorderSide.none),
-                    contentPadding: EdgeInsets.zero,
-                  ),
-                ),
-              ),
-            )
-          : null,
-    ),
-    body: Stack(
-      children: [
-        Container(decoration: _buildChatDecoration()),
-        if (_isInCall && !kIsWeb)
-          CallWidget(
-              engine: _agoraEngine!, isVideo: _isVideoCall, onEnd: _endCall),
-        SafeArea(
-          child: Column(
-            children: [
-              if (_messages.any((m) => m['is_pinned'] == true))
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  color: Colors.deepPurple.withOpacity(0.2),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('Pinned Messages',
-                          style: TextStyle(
-                              color: Colors.white, fontWeight: FontWeight.bold)),
-                      ..._messages.where((m) => m['is_pinned'] == true).map((m) {
-                        String pinnedText;
-                        try {
-                          pinnedText = m['type'] == 'text' && m['iv'] != null
-                              ? _encrypter.decrypt64(m['message'],
-                                  iv: encrypt.IV.fromBase64(m['iv']))
-                              : m['type'];
-                        } catch (e) {
-                          debugPrint(
-                              'Error decrypting pinned message ${m['id']}: $e');
-                          pinnedText = '[Decryption Failed]';
-                        }
-                        return ListTile(
-                          title: Text(pinnedText,
-                              style: const TextStyle(color: Colors.white)),
-                          onTap: () {
-                            final index = _messages.indexOf(m);
-                            _scrollController.animateTo(index * 100.0,
-                                duration: const Duration(milliseconds: 300),
-                                curve: Curves.easeInOut);
-                          },
-                        );
-                      }),
-                    ],
-                  ),
-                ),
-              Expanded(
-                  child: ListView(
-                      controller: _scrollController,
-                      padding: const EdgeInsets.all(16),
-                      children: listWidgets)),
-              if (_typingUsers.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.all(8.0),
-                  child: Row(children: [
-                    const SizedBox(width: 8),
-                    const CircularProgressIndicator(),
-                    const SizedBox(width: 8),
-                    Text(
-                      _typingUsers.length == 1
-                          ? '${_userNames[_typingUsers.first] ?? 'User'} is typing...'
-                          : '${_typingUsers.length} users are typing...',
-                      style: const TextStyle(color: Colors.white),
+        leadingWidth: 80,
+        title: Text(widget.conversation['group_name'] ?? 'Group Chat'),
+        backgroundColor: Colors.deepPurple,
+        actions: [
+          IconButton(
+              icon: const Icon(Icons.call),
+              onPressed: () => _startCall(isVideo: false)),
+          IconButton(
+              icon: const Icon(Icons.video_call),
+              onPressed: () => _startCall(isVideo: true)),
+          PopupMenuButton<String>(
+            onSelected: (value) async {
+              if (value == 'change_background') {
+                final result = await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (context) => ChatSettingsScreen(
+                            currentColor: _chatBgColor,
+                            currentImage: _chatBgImage)));
+                if (result != null && result is Map<String, dynamic>) {
+                  _updateChatBackground(
+                      color: result['color'],
+                      imageUrl: result['image'],
+                      cinematicTheme: result['cinematicTheme']);
+                }
+              } else if (value == 'search') {
+                setState(() {
+                  _showSearch = !_showSearch;
+                  if (!_showSearch) {
+                    _searchTerm = "";
+                    _searchController.clear();
+                  }
+                });
+              }
+            },
+            itemBuilder: (context) => const [
+              PopupMenuItem<String>(
+                  value: 'change_background', child: Text('Change Background')),
+              PopupMenuItem<String>(
+                  value: 'search', child: Text('Search Messages')),
+            ],
+          ),
+        ],
+        bottom: _showSearch
+            ? PreferredSize(
+                preferredSize: const Size.fromHeight(48),
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  child: TextField(
+                    controller: _searchController,
+                    onChanged: (value) => setState(() => _searchTerm = value),
+                    decoration: const InputDecoration(
+                      hintText: "Search messages...",
+                      fillColor: Colors.white,
+                      filled: true,
+                      prefixIcon: Icon(Icons.search),
+                      border: OutlineInputBorder(
+                          borderRadius: BorderRadius.all(Radius.circular(12)),
+                          borderSide: BorderSide.none),
+                      contentPadding: EdgeInsets.zero,
                     ),
-                  ]),
+                  ),
                 ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                color: Colors.red[900],
-                child: Column(
-                  children: [
-                    Row(
+              )
+            : null,
+      ),
+      body: Stack(
+        children: [
+          Container(decoration: _buildChatDecoration()),
+          if (_isInCall && !kIsWeb)
+            CallWidget(
+                engine: _agoraEngine!, isVideo: _isVideoCall, onEnd: _endCall),
+          SafeArea(
+            child: Column(
+              children: [
+                if (_messages.any((m) => m['is_pinned'] == true))
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    color: Colors.deepPurple.withOpacity(0.2),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        IconButton(
-                          icon: const Icon(Icons.emoji_emotions,
-                              color: Colors.white),
-                          onPressed: () {
-                            setState(() {
-                              _showEmojiPicker = !_showEmojiPicker;
-                              if (_showEmojiPicker) {
-                                FocusScope.of(context).unfocus();
-                              } else {
-                                FocusScope.of(context).requestFocus(FocusNode());
-                              }
-                            });
-                          },
-                        ),
-                        IconButton(
-                            icon: const Icon(Icons.attach_file,
+                        const Text('Pinned Messages',
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold)),
+                        ..._messages
+                            .where((m) => m['is_pinned'] == true)
+                            .map((m) {
+                          String pinnedText;
+                          try {
+                            pinnedText = m['type'] == 'text' && m['iv'] != null
+                                ? _encrypter.decrypt64(m['message'],
+                                    iv: encrypt.IV.fromBase64(m['iv']))
+                                : m['type'];
+                          } catch (e) {
+                            debugPrint(
+                                'Error decrypting pinned message ${m['id']}: $e');
+                            pinnedText = '[Decryption Failed]';
+                          }
+                          return ListTile(
+                            title: Text(pinnedText,
+                                style: const TextStyle(color: Colors.white)),
+                            onTap: () {
+                              final index = _messages.indexOf(m);
+                              _scrollController.animateTo(index * 100.0,
+                                  duration: const Duration(milliseconds: 300),
+                                  curve: Curves.easeInOut);
+                            },
+                          );
+                        }),
+                      ],
+                    ),
+                  ),
+                Expanded(
+                    child: ListView(
+                        controller: _scrollController,
+                        padding: const EdgeInsets.all(16),
+                        children: listWidgets)),
+                if (_typingUsers.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.all(8.0),
+                    child: Row(children: [
+                      const SizedBox(width: 8),
+                      const CircularProgressIndicator(),
+                      const SizedBox(width: 8),
+                      Text(
+                        _typingUsers.length == 1
+                            ? '${_userNames[_typingUsers.first] ?? 'User'} is typing...'
+                            : '${_typingUsers.length} users are typing...',
+                        style: const TextStyle(color: Colors.white),
+                      ),
+                    ]),
+                  ),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                  color: Colors.red[900],
+                  child: Column(
+                    children: [
+                      Row(
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.emoji_emotions,
                                 color: Colors.white),
-                            onPressed: _uploadAttachment),
-                        Expanded(
-                          child: TextField(
-                            controller: _controller,
-                            style: const TextStyle(color: Colors.white),
-                            decoration: const InputDecoration(
-                              hintText: "Type a message...",
-                              hintStyle: TextStyle(color: Colors.white54),
-                              border: OutlineInputBorder(
-                                  borderRadius:
-                                      BorderRadius.all(Radius.circular(20)),
-                                  borderSide: BorderSide.none),
-                              filled: true,
-                              fillColor: Colors.black26,
-                            ),
-                            textInputAction: TextInputAction.send,
-                            onSubmitted: (_) => _sendMessage(),
-                            onChanged: (text) {
-                              _saveDraft(text);
-                              if (!_isTyping) {
-                                setState(() => _isTyping = true);
-                                _updateTypingStatus(true);
-                              }
-                              _typingTimer?.cancel();
-                              _typingTimer = Timer(const Duration(seconds: 2), () {
-                                setState(() => _isTyping = false);
-                                _updateTypingStatus(false);
+                            onPressed: () {
+                              setState(() {
+                                _showEmojiPicker = !_showEmojiPicker;
+                                if (_showEmojiPicker) {
+                                  FocusScope.of(context).unfocus();
+                                } else {
+                                  FocusScope.of(context)
+                                      .requestFocus(FocusNode());
+                                }
                               });
                             },
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        _controller.text.isEmpty
-                            ? AnimatedBuilder(
-                                animation: _pulseAnimation!,
-                                builder: (context, child) {
-                                  return Transform.scale(
-                                    scale:
-                                        _isRecording ? _pulseAnimation!.value : 1.0,
-                                    child: Container(
-                                      decoration: BoxDecoration(
-                                          shape: BoxShape.circle,
-                                          color: _isRecording
-                                              ? Colors.red.withOpacity(0.3)
-                                              : Colors.transparent),
-                                      child: IconButton(
-                                          icon: Icon(
-                                              _isRecording ? Icons.stop : Icons.mic,
-                                              color: Colors.white),
-                                          onPressed: _isRecording
-                                              ? _stopRecording
-                                              : _startRecording),
-                                    ),
-                                  );
-                                },
-                              )
-                            : IconButton(
-                                icon: const Icon(Icons.send, color: Colors.white),
-                                onPressed: _sendMessage),
-                      ],
-                    ),
-                    if (_showEmojiPicker)
-                      SizedBox(
-                        height: 250,
-                        child: EmojiPicker(
-                          onEmojiSelected: (category, emoji) {
-                            _controller.text += emoji.emoji;
-                            _saveDraft(_controller.text);
-                          },
-                          config: const Config(
-                            bgColor: Colors.white,
-                            indicatorColor: Colors.deepPurple,
+                          IconButton(
+                              icon: const Icon(Icons.attach_file,
+                                  color: Colors.white),
+                              onPressed: _uploadAttachment),
+                          Expanded(
+                            child: TextField(
+                              controller: _controller,
+                              style: const TextStyle(color: Colors.white),
+                              decoration: const InputDecoration(
+                                hintText: "Type a message...",
+                                hintStyle: TextStyle(color: Colors.white54),
+                                border: OutlineInputBorder(
+                                    borderRadius:
+                                        BorderRadius.all(Radius.circular(20)),
+                                    borderSide: BorderSide.none),
+                                filled: true,
+                                fillColor: Colors.black26,
+                              ),
+                              textInputAction: TextInputAction.send,
+                              onSubmitted: (_) => _sendMessage(),
+                              onChanged: (text) {
+                                _saveDraft(text);
+                                if (!_isTyping) {
+                                  setState(() => _isTyping = true);
+                                  _updateTypingStatus(true);
+                                }
+                                _typingTimer?.cancel();
+                                _typingTimer =
+                                    Timer(const Duration(seconds: 2), () {
+                                  setState(() => _isTyping = false);
+                                  _updateTypingStatus(false);
+                                });
+                              },
+                            ),
                           ),
-                        ),
-                      )
-                  ],
+                          const SizedBox(width: 8),
+                          _controller.text.isEmpty
+                              ? AnimatedBuilder(
+                                  animation: _pulseAnimation!,
+                                  builder: (context, child) {
+                                    return Transform.scale(
+                                      scale: _isRecording
+                                          ? _pulseAnimation!.value
+                                          : 1.0,
+                                      child: Container(
+                                        decoration: BoxDecoration(
+                                            shape: BoxShape.circle,
+                                            color: _isRecording
+                                                ? Colors.red.withOpacity(0.3)
+                                                : Colors.transparent),
+                                        child: IconButton(
+                                            icon: Icon(
+                                                _isRecording
+                                                    ? Icons.stop
+                                                    : Icons.mic,
+                                                color: Colors.white),
+                                            onPressed: _isRecording
+                                                ? _stopRecording
+                                                : _startRecording),
+                                      ),
+                                    );
+                                  },
+                                )
+                              : IconButton(
+                                  icon: const Icon(Icons.send,
+                                      color: Colors.white),
+                                  onPressed: _sendMessage),
+                        ],
+                      ),
+                      if (_showEmojiPicker)
+                        SizedBox(
+                          height: 250,
+                          child: EmojiPicker(
+                            onEmojiSelected: (category, emoji) {
+                              _controller.text += emoji.emoji;
+                              _saveDraft(_controller.text);
+                            },
+                            config: const Config(
+                              bgColor: Colors.white,
+                              iconColorSelected: Colors.deepPurple,
+                            ),
+                          ),
+                        )
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
-      ],
-    ),
-  );
-}
+        ],
+      ),
+    );
+  }
 }
