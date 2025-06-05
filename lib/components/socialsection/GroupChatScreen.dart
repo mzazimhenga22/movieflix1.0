@@ -1324,9 +1324,13 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                               _controller.text += emoji.emoji;
                               _saveDraft(_controller.text);
                             },
-                            config: const Config(
-                              bgColor: Colors.white,
-                              iconColorSelected: Colors.deepPurple,
+                            config: Config(
+                              emojiViewConfig: EmojiViewConfig(
+                                backgroundColor: Colors.white,
+                              ),
+                              categoryViewConfig: CategoryViewConfig(
+                                iconColorSelected: Colors.deepPurple,
+                              ),
                             ),
                           ),
                         )
@@ -1341,3 +1345,4 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     );
   }
 }
+
