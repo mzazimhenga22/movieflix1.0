@@ -1348,3 +1348,4 @@ class _IndividualChatScreenState extends State<IndividualChatScreen>
   }
 }
 
+
