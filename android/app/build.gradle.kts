@@ -17,7 +17,7 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
 
-        // 🛑 Commented out to prevent conflict with --split-per-abi
+        // ❌ Removed abiFilters since we're building a single APK
         /*
         ndk {
             abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
@@ -37,9 +37,13 @@ android {
 
     buildTypes {
         getByName("release") {
-            // ⚠️ No signing config
-            isMinifyEnabled = false
-            isShrinkResources = false
+            // ✅ Enable shrinking and obfuscation for smaller APK
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
 
