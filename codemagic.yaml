@@ -1,26 +1,35 @@
 workflows:
-  android-release:
-    name: Build Android Release
+  flutter-workflow:
+    name: Build Flutter App
     environment:
       flutter: stable
+      xcode: latest
+      cocoapods: default
 
     scripts:
-      - name: Clean previous build and cache
-        script: |
-          flutter clean
-          flutter pub cache repair
-
-      - name: Get dependencies
+      # 1) Install Pub dependencies
+      - name: Install dependencies
         script: flutter pub get
 
-      - name: Build single-architecture APK with obfuscation
-        script: >
-          flutter build apk
-          --release
-          --obfuscate
-          --split-debug-info=build/symbols
+      # 2) Generate app icons using flutter_launcher_icons
+      - name: Generate app icons
+        script: flutter pub run flutter_launcher_icons:main
+
+      # 3) Clean any stale build outputs
+      - name: Clean previous build artifacts
+        script: |
+          flutter clean
+          rm -rf android/app/build
+
+      # 4) Give Gradle more heap (4.5 GB) to avoid splitter OOM
+      - name: Ensure Gradle JVM args
+        script: |
+          grep -qxF 'org.gradle.jvmargs=-Xmx4608m' android/gradle.properties \
+            || echo 'org.gradle.jvmargs=-Xmx4608m' >> android/gradle.properties
+
+      # 5) Build the release APK
+      - name: Build APK
+        script: flutter build apk --release
 
     artifacts:
       - build/app/outputs/flutter-apk/app-release.apk
-      - build/symbols/**
-
