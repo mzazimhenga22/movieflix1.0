@@ -1492,9 +1492,16 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
         unselectedFontSize: 12,
         items: const [
           BottomNavigationBarItem(
-              icon: Icon(Icons.home, size: 22), label: "Feed"),
+              icon: Icon(Icons.home, size: 22), label: "Feeds"),
           BottomNavigationBarItem(
-              icon: Icon(Icons.history, size: 22), label: "Profile"),
+              icon: Icon(Icons.history, size: 22), label: "Stories"),
+          BottomNavigationBarItem(
+              icon: Icon(Icons.notifications, size: 22),
+              label: "Notifications"),
+          BottomNavigationBarItem(
+              icon: Icon(Icons.whatshot, size: 22), label: "Streaks"),
+          BottomNavigationBarItem(
+              icon: Icon(Icons.person, size: 22), label: "Profile"),
         ],
       ),
     );
