@@ -28,9 +28,12 @@ class TVShowEpisodesSection extends StatefulWidget {
 
 class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
   final Map<int, List<dynamic>> _episodesCache = {};
+  final Map<int, String?> _seasonTmdbIdCache = {};
   late int _selectedSeasonNumber;
   bool _isLoading = false;
   bool _isVisible = false;
+  bool _fetchError = false;
+  String _errorMessage = '';
 
   @override
   void initState() {
@@ -50,7 +53,11 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
 
   Future<void> _fetchEpisodes(int seasonNumber) async {
     if (_episodesCache[seasonNumber] != null || _isLoading) return;
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _fetchError = false;
+      _errorMessage = '';
+    });
     try {
       debugPrint('Fetching episodes for season $seasonNumber');
       final seasonDetails =
@@ -58,6 +65,7 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
       if (!mounted) return;
       setState(() {
         _episodesCache[seasonNumber] = seasonDetails['episodes'] ?? [];
+        _seasonTmdbIdCache[seasonNumber] = seasonDetails['id']?.toString();
         _isLoading = false;
       });
     } catch (e) {
@@ -65,11 +73,11 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
       if (!mounted) return;
       setState(() {
         _episodesCache[seasonNumber] = [];
+        _seasonTmdbIdCache[seasonNumber] = null;
         _isLoading = false;
+        _fetchError = true;
+        _errorMessage = 'Failed to load episodes: $e';
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to load episodes: $e')),
-      );
     }
   }
 
@@ -117,13 +125,43 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
             final episodeNumber =
                 (episode['episode_number'] as num?)?.toInt() ?? 1;
             final episodeName = episode['name'] as String? ?? 'Untitled';
+            final episodeId = episode['id']?.toString();
+            final seasonTmdbId = _seasonTmdbIdCache[seasonNumber];
+
+            // Validate TMDB IDs
+            if (episodeId == null || seasonTmdbId == null) {
+              debugPrint(
+                  'Missing TMDB IDs: episodeId=$episodeId, seasonTmdbId=$seasonTmdbId');
+              if (mounted) {
+                Navigator.pop(context);
+                showDialog(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    title: const Text("Error"),
+                    content: const Text(
+                        "Unable to fetch episode details. Please try again later."),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text("OK"),
+                      ),
+                    ],
+                  ),
+                );
+              }
+              return;
+            }
 
             Map<String, dynamic> streamingInfo = {};
             const maxRetries = 2;
-            for (int attempt = 1; attempt <= maxRetries; attempt++) {
+            bool success = false;
+            String lastError = '';
+
+            for (int attempt = 1;
+                attempt <= maxRetries && !success;
+                attempt++) {
               try {
-                debugPrint(
-                    'Fetching streaming info for episode $episodeNumber, season $seasonNumber (Attempt $attempt)');
+                debugPrint('Fetching streaming info (Attempt $attempt)');
                 streamingInfo = await StreamingService.getStreamingLink(
                   tmdbId: widget.tvId.toString(),
                   title: widget.tvShowName.isNotEmpty
@@ -133,37 +171,47 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
                   episode: episodeNumber,
                   resolution: resolution,
                   enableSubtitles: subtitles,
+                  seasonTmdbId: seasonTmdbId,
+                  episodeTmdbId: episodeId,
                 );
-                break; // Exit loop on success
+                success = true;
               } catch (e, stacktrace) {
                 debugPrint("Streaming fetch error (Attempt $attempt): $e");
                 debugPrintStack(stackTrace: stacktrace);
-                if (attempt == maxRetries) {
-                  if (!mounted) {
-                    debugPrint(
-                        'Context not mounted, aborting episode streaming');
-                    Navigator.pop(context);
-                    return;
-                  }
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                        content: Text(
-                            "Failed to load stream after $maxRetries attempts: $e")),
-                  );
-                  return;
+                lastError = e.toString();
+                if (attempt < maxRetries) {
+                  await Future.delayed(const Duration(seconds: 1));
                 }
-                await Future.delayed(
-                    const Duration(seconds: 1)); // Brief delay before retry
               }
             }
 
             if (!mounted) {
-              debugPrint('Context not mounted, aborting episode streaming');
+              debugPrint('Context not mounted, aborting');
               Navigator.pop(context);
               return;
             }
             Navigator.pop(context);
+
+            if (!success) {
+              debugPrint('All retries failed: $lastError');
+              if (mounted) {
+                showDialog(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    title: const Text("Streaming Error"),
+                    content: Text(
+                        "Failed to load episode after $maxRetries attempts: $lastError"),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text("OK"),
+                      ),
+                    ],
+                  ),
+                );
+              }
+              return;
+            }
 
             final streamUrl = streamingInfo['url'] as String? ?? '';
             final subtitleUrl = streamingInfo['subtitleUrl'] as String?;
@@ -172,18 +220,30 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
                     ?.map((ep) => ep['episode_number'].toString())
                     .toList() ??
                 [];
-            debugPrint('Episode stream URL: $streamUrl, isHls: $isHls');
+
+            debugPrint('Stream URL: $streamUrl, isHls: $isHls');
             if (streamUrl.isEmpty || !(await _isUrlAccessible(streamUrl))) {
-              debugPrint('Episode stream URL is empty or inaccessible');
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                    content: Text(
-                        "Streaming details not available or URL is inaccessible")),
-              );
+              debugPrint('Stream URL is empty or inaccessible');
+              if (mounted) {
+                showDialog(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    title: const Text("Unavailable"),
+                    content: const Text(
+                        "This episode is not available at the moment. Please try again later."),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text("OK"),
+                      ),
+                    ],
+                  ),
+                );
+              }
               return;
             }
 
-            debugPrint('Navigating to MainVideoPlayer for episode');
+            debugPrint('Navigating to MainVideoPlayer');
             if (mounted) {
               Navigator.push(
                 context,
@@ -265,7 +325,15 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
                   ? Center(
                       child: CircularProgressIndicator(
                           color: settings.accentColor))
-                  : _buildEpisodesList(),
+                  : _fetchError
+                      ? Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: Text(
+                            _errorMessage,
+                            style: const TextStyle(color: Colors.red),
+                          ),
+                        )
+                      : _buildEpisodesList(),
             ],
           ),
         );
@@ -275,11 +343,13 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
 
   Widget _buildEpisodesList() {
     final episodes = _episodesCache[_selectedSeasonNumber] ?? [];
-    if (episodes.isEmpty && !_isLoading) {
-      return const Padding(
-        padding: EdgeInsets.all(16),
-        child: Text('No episodes available.',
-            style: TextStyle(color: Colors.white70)),
+    if (episodes.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.all(16),
+        child: Text(
+          'No episodes found for season $_selectedSeasonNumber.',
+          style: const TextStyle(color: Colors.white70),
+        ),
       );
     }
 
@@ -357,7 +427,8 @@ class _EpisodeCard extends StatelessWidget {
                             width: 120,
                             height: 70,
                             color: Colors.grey,
-                            child: const Icon(Icons.error, color: Colors.red),
+                            child: const Icon(Icons.image_not_supported,
+                                color: Colors.white70),
                           ),
                         )
                       : Container(
@@ -383,7 +454,9 @@ class _EpisodeCard extends StatelessWidget {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        episodeOverview,
+                        episodeOverview.isEmpty
+                            ? 'No description available.'
+                            : episodeOverview,
                         style: const TextStyle(
                             fontSize: 14, color: Colors.white70),
                         maxLines: 2,
@@ -509,13 +582,13 @@ class LoadingDialog extends StatefulWidget {
 
 class LoadingDialogState extends State<LoadingDialog> {
   bool showSecondMessage = false;
-  Timer? _timer;
+  Timer? _timeoutTimer;
 
   @override
   void initState() {
     super.initState();
     debugPrint('LoadingDialogState initState called');
-    _timer = Timer(const Duration(seconds: 10), () {
+    _timeoutTimer = Timer(const Duration(seconds: 30), () {
       if (mounted) setState(() => showSecondMessage = true);
     });
   }
@@ -523,7 +596,7 @@ class LoadingDialogState extends State<LoadingDialog> {
   @override
   void dispose() {
     debugPrint('LoadingDialogState dispose called');
-    _timer?.cancel();
+    _timeoutTimer?.cancel();
     super.dispose();
   }
 
@@ -547,9 +620,20 @@ class LoadingDialogState extends State<LoadingDialog> {
             if (showSecondMessage) ...[
               const SizedBox(height: 12),
               const Text(
-                "This may take a moment. Some episodes may not be available yet.",
+                "This is taking longer than expected.",
                 style: TextStyle(color: Colors.white70),
                 textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 12),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: settings.accentColor),
+                onPressed: () {
+                  debugPrint('Loading dialog canceled by user');
+                  Navigator.pop(context);
+                },
+                child:
+                    const Text("Cancel", style: TextStyle(color: Colors.black)),
               ),
             ],
           ],
@@ -558,3 +642,4 @@ class LoadingDialogState extends State<LoadingDialog> {
     );
   }
 }
+
