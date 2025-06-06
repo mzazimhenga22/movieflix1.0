@@ -48,9 +48,9 @@ dependencies:
   hive_flutter: ^1.1.0
   dio: ^5.8.0+1
   uuid: ^4.5.1
-  agora_rtc_engine: ^6.2.0
   encrypt: ^5.0.3
   flutter_local_notifications: ^17.0.0
+  flutter_webrtc: 0.14.0
 
 
   # Storage & Database
