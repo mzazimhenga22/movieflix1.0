@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:video_player/video_player.dart';
-import 'package:agora_rtc_engine/agora_rtc_engine.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:encrypt/encrypt.dart' as encrypt;
 
@@ -459,54 +458,3 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
   }
 }
 
-class CallWidget extends StatelessWidget {
-  final RtcEngine engine;
-  final bool isVideo;
-  final VoidCallback onEnd;
-
-  const CallWidget(
-      {Key? key,
-      required this.engine,
-      required this.isVideo,
-      required this.onEnd})
-      : super(key: key);
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      color: Colors.black,
-      child: Stack(
-        children: [
-          if (isVideo) ...[
-            AgoraVideoView(
-                controller: VideoViewController(
-                    rtcEngine: engine, canvas: const VideoCanvas(uid: 0))),
-            Align(
-              alignment: Alignment.topLeft,
-              child: Container(
-                width: 120,
-                height: 160,
-                margin: const EdgeInsets.all(16),
-                child: AgoraVideoView(
-                    controller: VideoViewController.remote(
-                        rtcEngine: engine,
-                        canvas: const VideoCanvas(uid: 1),
-                        connection: RtcConnection(channelId: ''))),
-              ),
-            ),
-          ],
-          Align(
-              alignment: Alignment.bottomCenter,
-              child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: ElevatedButton(
-                      onPressed: onEnd,
-                      style:
-                          ElevatedButton.styleFrom(backgroundColor: Colors.red),
-                      child: const Text('End Call',
-                          style: TextStyle(color: Colors.white))))),
-        ],
-      ),
-    );
-  }
-}
