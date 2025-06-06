@@ -8,7 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:uuid/uuid.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:agora_rtc_engine/agora_rtc_engine.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'dart:io' show File;
 import 'dart:typed_data';
@@ -64,8 +64,15 @@ class _GroupChatScreenState extends State<GroupChatScreen>
   AnimationController? _animationController;
   Animation<double>? _pulseAnimation;
 
-  // Agora for calls
-  RtcEngine? _agoraEngine;
+  // WebRTC for group calls
+  Map<String, RTCPeerConnection> _peerConnections = {};
+  Map<String, MediaStream> _remoteStreams = {};
+  MediaStream? _localStream;
+  String? _currentCallId;
+  StreamSubscription<DocumentSnapshot>? _callSubscription;
+  StreamSubscription<QuerySnapshot>? _offersSubscription;
+  StreamSubscription<QuerySnapshot>? _answersSubscription;
+  StreamSubscription<QuerySnapshot>? _candidatesSubscription;
   bool _isInCall = false;
   bool _isVideoCall = false;
 
@@ -100,7 +107,6 @@ class _GroupChatScreenState extends State<GroupChatScreen>
         participant['id'].toString(): participant['username'] ?? 'Unknown'
     };
     _initializeRecorder();
-    _initializeAgora();
     _initializeAnimation();
     _initializeEncryption();
     _initializeLocalDatabase();
@@ -127,6 +133,21 @@ class _GroupChatScreenState extends State<GroupChatScreen>
       setState(() => _typingUsers = typingUsers
           .where((id) => id != widget.currentUser['id'].toString())
           .toList());
+    });
+    // Listen for active calls in this conversation
+    _firestore
+        .collection('calls')
+        .where('conversation_id',
+            isEqualTo: widget.conversation['id'].toString())
+        .where('status', isEqualTo: 'active')
+        .snapshots()
+        .listen((snapshot) {
+      if (snapshot.docs.isNotEmpty && !_isInCall) {
+        final callDoc = snapshot.docs.first;
+        final callId = callDoc.id;
+        final isVideo = callDoc['is_video'];
+        _joinCall(callId, isVideo);
+      }
     });
   }
 
@@ -166,21 +187,6 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     _recorder = FlutterSoundRecorder();
     await _recorder!.openRecorder();
     await Permission.microphone.request();
-  }
-
-  Future<void> _initializeAgora() async {
-    if (kIsWeb) return;
-    await [Permission.microphone, Permission.camera].request();
-    _agoraEngine = await createAgoraRtcEngine();
-    await _agoraEngine!
-        .initialize(const RtcEngineContext(appId: 'YOUR_AGORA_APP_ID'));
-    _agoraEngine!.registerEventHandler(RtcEngineEventHandler(
-      onJoinChannelSuccess: (connection, elapsed) =>
-          debugPrint('Joined channel: ${connection.channelId}'),
-      onUserJoined: (connection, remoteUid, elapsed) =>
-          debugPrint('User $remoteUid joined'),
-      onUserOffline: (connection, remoteUid, reason) => _endCall(),
-    ));
   }
 
   Future<void> _loadMessages() async {
@@ -315,7 +321,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     final message = {
       'id': const Uuid().v4(),
       'sender_id': senderId,
-      'receiver_id': conversationId, // Set to group conversation ID
+      'receiver_id': conversationId,
       'conversation_id': conversationId,
       'message': encryptedText,
       'iv': base64Encode(iv.bytes),
@@ -432,38 +438,232 @@ class _GroupChatScreenState extends State<GroupChatScreen>
   }
 
   Future<void> _startCall({required bool isVideo}) async {
-    if (kIsWeb) return;
     if (await Permission.microphone.isGranted &&
         (!isVideo || await Permission.camera.isGranted)) {
       setState(() {
         _isInCall = true;
         _isVideoCall = isVideo;
       });
-      final channelId = const Uuid().v4();
-      if (isVideo) {
-        await _agoraEngine!.enableVideo();
-      } else {
-        await _agoraEngine!.disableVideo();
-      }
-      await _agoraEngine!.joinChannel(
-          token: '',
-          channelId: channelId,
-          uid: 0,
-          options: const ChannelMediaOptions());
-      await _firestore.collection('calls').doc(channelId).set({
-        'caller_id': widget.currentUser['id'].toString(),
-        'receiver_id': widget.conversation['id'].toString(),
-        'conversation_id': widget.conversation['id'],
-        'channel_id': channelId,
+
+      _localStream = await navigator.mediaDevices.getUserMedia({
+        'audio': true,
+        'video': isVideo,
+      });
+
+      final callId = const Uuid().v4();
+      _currentCallId = callId;
+      await _firestore.collection('calls').doc(callId).set({
+        'conversation_id': widget.conversation['id'].toString(),
+        'initiator_id': widget.currentUser['id'].toString(),
         'is_video': isVideo,
+        'participants': [widget.currentUser['id'].toString()],
+        'status': 'active',
         'timestamp': FieldValue.serverTimestamp(),
       });
+
+      _setupCallListeners(callId);
     }
   }
 
-  void _endCall() async {
-    if (kIsWeb) return;
-    await _agoraEngine!.leaveChannel();
+  Future<void> _joinCall(String callId, bool isVideo) async {
+    setState(() {
+      _isInCall = true;
+      _isVideoCall = isVideo;
+      _currentCallId = callId;
+    });
+
+    _localStream = await navigator.mediaDevices.getUserMedia({
+      'audio': true,
+      'video': isVideo,
+    });
+
+    await _firestore.collection('calls').doc(callId).update({
+      'participants':
+          FieldValue.arrayUnion([widget.currentUser['id'].toString()])
+    });
+
+    _setupCallListeners(callId);
+  }
+
+  void _setupCallListeners(String callId) {
+    _offersSubscription = _firestore
+        .collection('calls')
+        .doc(callId)
+        .collection('offers')
+        .where('to', isEqualTo: widget.currentUser['id'].toString())
+        .snapshots()
+        .listen((snapshot) async {
+      for (var doc in snapshot.docChanges) {
+        if (doc.type == DocumentChangeType.added) {
+          final data = doc.doc.data()!;
+          final from = data['from'].toString();
+          final offer = RTCSessionDescription(
+            data['offer']['sdp'],
+            data['offer']['type'],
+          );
+
+          final pc = await _createPeerConnection(from);
+          await pc.setRemoteDescription(offer);
+          final answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+
+          await _firestore
+              .collection('calls')
+              .doc(callId)
+              .collection('answers')
+              .add({
+            'from': widget.currentUser['id'].toString(),
+            'to': from,
+            'answer': {
+              'sdp': answer.sdp,
+              'type': answer.type,
+            },
+          });
+
+          _listenForCandidates(callId, from);
+        }
+      }
+    });
+
+    _answersSubscription = _firestore
+        .collection('calls')
+        .doc(callId)
+        .collection('answers')
+        .where('to', isEqualTo: widget.currentUser['id'].toString())
+        .snapshots()
+        .listen((snapshot) async {
+      for (var doc in snapshot.docChanges) {
+        if (doc.type == DocumentChangeType.added) {
+          final data = doc.doc.data()!;
+          final from = data['from'].toString();
+          final answer = RTCSessionDescription(
+            data['answer']['sdp'],
+            data['answer']['type'],
+          );
+          final pc = _peerConnections[from];
+          if (pc != null) {
+            await pc.setRemoteDescription(answer);
+          }
+        }
+      }
+    });
+
+    _callSubscription = _firestore
+        .collection('calls')
+        .doc(callId)
+        .snapshots()
+        .listen((snapshot) async {
+      final data = snapshot.data();
+      if (data != null) {
+        final participants = (data['participants'] as List?)
+                ?.map((e) => e.toString())
+                .toList() ??
+            [];
+        final myId = widget.currentUser['id'].toString();
+        for (var participant in participants) {
+          if (participant != myId &&
+              !_peerConnections.containsKey(participant)) {
+            await _sendOffer(callId, participant);
+          }
+        }
+      }
+    });
+  }
+
+  Future<RTCPeerConnection> _createPeerConnection(String peerId) async {
+    final pc = await createPeerConnection({
+      'iceServers': [
+        {'url': 'stun:stun.l.google.com:19302'},
+      ]
+    });
+
+    pc.onIceCandidate = (candidate) {
+      _firestore
+          .collection('calls')
+          .doc(_currentCallId)
+          .collection('candidates')
+          .add({
+        'from': widget.currentUser['id'].toString(),
+        'to': peerId,
+        'candidate': {
+          'candidate': candidate.candidate,
+          'sdpMid': candidate.sdpMid,
+          'sdpMLineIndex': candidate.sdpMLineIndex,
+        },
+      });
+    };
+
+    pc.onAddStream = (stream) {
+      setState(() {
+        _remoteStreams[peerId] = stream;
+      });
+    };
+
+    _localStream!.getTracks().forEach((track) {
+      pc.addTrack(track, _localStream!);
+    });
+
+    _peerConnections[peerId] = pc;
+    return pc;
+  }
+
+  Future<void> _sendOffer(String callId, String to) async {
+    final pc = await _createPeerConnection(to);
+    final offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    await _firestore.collection('calls').doc(callId).collection('offers').add({
+      'from': widget.currentUser['id'].toString(),
+      'to': to,
+      'offer': {
+        'sdp': offer.sdp,
+        'type': offer.type,
+      },
+    });
+  }
+
+  void _listenForCandidates(String callId, String from) {
+    _firestore
+        .collection('calls')
+        .doc(callId)
+        .collection('candidates')
+        .where('to', isEqualTo: widget.currentUser['id'].toString())
+        .where('from', isEqualTo: from)
+        .snapshots()
+        .listen((snapshot) {
+      for (var doc in snapshot.docChanges) {
+        if (doc.type == DocumentChangeType.added) {
+          final data = doc.doc.data()!;
+          final candidate = RTCIceCandidate(
+            data['candidate']['candidate'],
+            data['candidate']['sdpMid'],
+            data['candidate']['sdpMLineIndex'],
+          );
+          final pc = _peerConnections[from];
+          if (pc != null) {
+            pc.addCandidate(candidate);
+          }
+        }
+      }
+    });
+  }
+
+  Future<void> _endCall() async {
+    _peerConnections.forEach((key, pc) async {
+      await pc.close();
+    });
+    _peerConnections.clear();
+    _remoteStreams.clear();
+    await _localStream?.dispose();
+    if (_currentCallId != null) {
+      await _firestore.collection('calls').doc(_currentCallId).update({
+        'status': 'ended',
+      });
+      _currentCallId = null;
+    }
+    _callSubscription?.cancel();
+    _offersSubscription?.cancel();
+    _answersSubscription?.cancel();
+    _candidatesSubscription?.cancel();
     setState(() => _isInCall = false);
   }
 
@@ -472,7 +672,6 @@ class _GroupChatScreenState extends State<GroupChatScreen>
       final messageId = await AuthDatabase.instance.createMessage(message);
       final conversationId = widget.conversation['id'].toString();
 
-      // Verify the conversation exists and is a group type before sending
       final convoDoc = await _firestore
           .collection('conversations')
           .doc(conversationId)
@@ -510,11 +709,10 @@ class _GroupChatScreenState extends State<GroupChatScreen>
         'delivered_at': DateTime.now().toIso8601String(),
       });
 
-      // Update only the group conversation document
       await _firestore.collection('conversations').doc(conversationId).set({
         'participants': widget.conversation['participants'],
         'group_name': widget.conversation['group_name'],
-        'type': 'group', // Reinforce the type
+        'type': 'group',
         'last_message': message['type'] == 'text'
             ? _encrypter.decrypt64(message['message'],
                 iv: encrypt.IV.fromBase64(message['iv']))
@@ -867,7 +1065,6 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     _messagesSubscription?.cancel();
     _recorder?.closeRecorder();
     _recorder = null;
-    if (!kIsWeb) _agoraEngine?.release();
     _controller.dispose();
     _scrollController.dispose();
     _searchController.dispose();
@@ -875,6 +1072,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     _audioPlayer.dispose();
     _typingTimer?.cancel();
     _localDb?.close();
+    _endCall();
     super.dispose();
   }
 
@@ -1159,9 +1357,13 @@ class _GroupChatScreenState extends State<GroupChatScreen>
       body: Stack(
         children: [
           Container(decoration: _buildChatDecoration()),
-          if (_isInCall && !kIsWeb)
-            CallWidget(
-                engine: _agoraEngine!, isVideo: _isVideoCall, onEnd: _endCall),
+          if (_isInCall)
+            WebRTCCallWidget(
+              localStream: _localStream,
+              remoteStreams: _remoteStreams,
+              isVideo: _isVideoCall,
+              onEnd: _endCall,
+            ),
           SafeArea(
             child: Column(
               children: [
@@ -1338,6 +1540,132 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                   ),
                 ),
               ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class WebRTCCallWidget extends StatefulWidget {
+  final MediaStream? localStream;
+  final Map<String, MediaStream> remoteStreams;
+  final bool isVideo;
+  final VoidCallback onEnd;
+
+  const WebRTCCallWidget({
+    Key? key,
+    required this.localStream,
+    required this.remoteStreams,
+    required this.isVideo,
+    required this.onEnd,
+  }) : super(key: key);
+
+  @override
+  _WebRTCCallWidgetState createState() => _WebRTCCallWidgetState();
+}
+
+class _WebRTCCallWidgetState extends State<WebRTCCallWidget> {
+  RTCVideoRenderer _localRenderer = RTCVideoRenderer();
+  Map<String, RTCVideoRenderer> _remoteRenderers = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _initRenderers();
+  }
+
+  Future<void> _initRenderers() async {
+    await _localRenderer.initialize();
+    if (widget.localStream != null) {
+      _localRenderer.srcObject = widget.localStream;
+    }
+    for (var entry in widget.remoteStreams.entries) {
+      final renderer = RTCVideoRenderer();
+      await renderer.initialize();
+      renderer.srcObject = entry.value;
+      _remoteRenderers[entry.key] = renderer;
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant WebRTCCallWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.localStream != oldWidget.localStream) {
+      _localRenderer.srcObject = widget.localStream;
+    }
+    for (var key in widget.remoteStreams.keys) {
+      if (!oldWidget.remoteStreams.containsKey(key)) {
+        final renderer = RTCVideoRenderer();
+        renderer.initialize().then((_) {
+          renderer.srcObject = widget.remoteStreams[key];
+          setState(() {
+            _remoteRenderers[key] = renderer;
+          });
+        });
+      } else if (widget.remoteStreams[key] != oldWidget.remoteStreams[key]) {
+        _remoteRenderers[key]?.srcObject = widget.remoteStreams[key];
+      }
+    }
+    for (var key in oldWidget.remoteStreams.keys) {
+      if (!widget.remoteStreams.containsKey(key)) {
+        _remoteRenderers[key]?.dispose();
+        _remoteRenderers.remove(key);
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _localRenderer.dispose();
+    _remoteRenderers.values.forEach((renderer) => renderer.dispose());
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: Colors.black,
+      child: Stack(
+        children: [
+          if (widget.isVideo) ...[
+            GridView.builder(
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+              ),
+              itemCount: _remoteRenderers.length,
+              itemBuilder: (context, index) {
+                final renderer = _remoteRenderers.values.elementAt(index);
+                return RTCVideoView(
+                  renderer,
+                  objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+                );
+              },
+            ),
+            Align(
+              alignment: Alignment.topLeft,
+              child: Container(
+                width: 120,
+                height: 160,
+                margin: const EdgeInsets.all(16),
+                child: RTCVideoView(
+                  _localRenderer,
+                  objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+                ),
+              ),
+            ),
+          ],
+          Align(
+            alignment: Alignment.bottomCenter,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: ElevatedButton(
+                onPressed: widget.onEnd,
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                child: const Text('End Call',
+                    style: TextStyle(color: Colors.white)),
+              ),
             ),
           ),
         ],
