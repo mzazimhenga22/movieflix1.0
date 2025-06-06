@@ -5,6 +5,7 @@ import 'package:movie_app/tmdb_api.dart' as tmdb;
 import 'package:movie_app/movie_detail_screen.dart';
 import 'package:movie_app/components/movie_card.dart';
 import 'package:shimmer/shimmer.dart';
+import 'recommended_movies_screen.dart'; // Import the new screen
 
 /// SubHomeScreen widget: Handles trending and recommended movies sections
 class SubHomeScreen extends StatefulWidget {
@@ -16,7 +17,6 @@ class SubHomeScreen extends StatefulWidget {
 
 class SubHomeScreenState extends State<SubHomeScreen> {
   final trendingController = ScrollController();
-  final recommendedController = ScrollController();
   List<dynamic> trendingMovies = [];
   List<dynamic> recommendedMovies = [];
   bool isLoadingTrending = false;
@@ -27,12 +27,11 @@ class SubHomeScreenState extends State<SubHomeScreen> {
     super.initState();
     fetchInitialData();
     trendingController.addListener(onScrollTrending);
-    recommendedController.addListener(onScrollRecommended);
   }
 
   Future<void> fetchInitialData() async {
     await fetchTrendingMovies();
-    await fetchRecommendedMovies();
+    await fetchRecommendedMovies(page: 1); // Fetch only the first page
   }
 
   Future<void> fetchTrendingMovies() async {
@@ -45,12 +44,13 @@ class SubHomeScreenState extends State<SubHomeScreen> {
     });
   }
 
-  Future<void> fetchRecommendedMovies() async {
+  Future<void> fetchRecommendedMovies({int page = 1}) async {
     if (isLoadingRecommended) return;
     setState(() => isLoadingRecommended = true);
-    final movies = await tmdb.TMDBApi.fetchRecommendedMovies();
+    final response = await tmdb.TMDBApi.fetchRecommendedMovies(page: page);
     setState(() {
-      recommendedMovies.addAll(movies);
+      recommendedMovies =
+          response['movies']; // Replace, don’t append, for page 1 only
       isLoadingRecommended = false;
     });
   }
@@ -58,13 +58,6 @@ class SubHomeScreenState extends State<SubHomeScreen> {
   void onScrollTrending() {
     if (trendingController.position.extentAfter < 200 && !isLoadingTrending) {
       fetchTrendingMovies();
-    }
-  }
-
-  void onScrollRecommended() {
-    if (recommendedController.position.extentAfter < 200 &&
-        !isLoadingRecommended) {
-      fetchRecommendedMovies();
     }
   }
 
@@ -127,7 +120,7 @@ class SubHomeScreenState extends State<SubHomeScreen> {
         height: 240,
         child: ListView.builder(
           scrollDirection: Axis.horizontal,
-          itemCount: 5, // Show 5 placeholders
+          itemCount: 5,
           itemBuilder: (context, index) => buildMovieCardPlaceholder(),
         ),
       );
@@ -140,13 +133,13 @@ class SubHomeScreenState extends State<SubHomeScreen> {
         itemCount: trendingMovies.length + (isLoadingTrending ? 1 : 0),
         itemBuilder: (context, index) {
           if (index == trendingMovies.length) {
-            return buildMovieCardPlaceholder(); // Replaced CircularProgressIndicator
+            return buildMovieCardPlaceholder();
           }
           final movie = trendingMovies[index];
           if (movie == null) return const SizedBox();
           final posterPath = movie['poster_path'];
           final posterUrl = posterPath != null
-              ? 'https://image.tmdb.org/t/p/w500$posterPath'
+              ? 'https://image.tmdb.org/t/p/w342$posterPath' // Smaller image size
               : '';
           return MovieCard(
             imageUrl: posterUrl,
@@ -180,48 +173,59 @@ class SubHomeScreenState extends State<SubHomeScreen> {
           mainAxisSpacing: 10,
           crossAxisSpacing: 10,
         ),
-        itemCount: 6, // Show 6 placeholders
+        itemCount: 6,
         itemBuilder: (context, index) => buildMovieCardPlaceholder(),
       );
     }
-    return GridView.builder(
-      controller: recommendedController,
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
-        childAspectRatio: 0.67,
-        mainAxisSpacing: 10,
-        crossAxisSpacing: 10,
-      ),
-      itemCount: recommendedMovies.length + (isLoadingRecommended ? 1 : 0),
-      itemBuilder: (context, index) {
-        if (index == recommendedMovies.length) {
-          return buildMovieCardPlaceholder(); // Replaced CircularProgressIndicator
-        }
-        final movie = recommendedMovies[index];
-        if (movie == null) return const SizedBox();
-        final posterPath = movie['poster_path'];
-        final posterUrl = posterPath != null
-            ? 'https://image.tmdb.org/t/p/w500$posterPath'
-            : '';
-        return MovieCard(
-          imageUrl: posterUrl,
-          title: movie['title'] ?? movie['name'] ?? 'No Title',
-          rating: movie['vote_average'] != null
-              ? double.tryParse(movie['vote_average'].toString())
-              : null,
-          onTap: () {
+    return Column(
+      children: [
+        GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 3,
+            childAspectRatio: 0.67,
+            mainAxisSpacing: 10,
+            crossAxisSpacing: 10,
+          ),
+          itemCount: recommendedMovies.length,
+          itemBuilder: (context, index) {
+            final movie = recommendedMovies[index];
+            if (movie == null) return const SizedBox();
+            final posterPath = movie['poster_path'];
+            final posterUrl = posterPath != null
+                ? 'https://image.tmdb.org/t/p/w342$posterPath' // Smaller image size
+                : '';
+            return MovieCard(
+              imageUrl: posterUrl,
+              title: movie['title'] ?? movie['name'] ?? 'No Title',
+              rating: movie['vote_average'] != null
+                  ? double.tryParse(movie['vote_average'].toString())
+                  : null,
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => MovieDetailScreen(movie: movie),
+                  ),
+                );
+              },
+            );
+          },
+        ),
+        TextButton(
+          onPressed: () {
             Navigator.push(
               context,
               MaterialPageRoute(
-                builder: (context) => MovieDetailScreen(movie: movie),
+                builder: (context) => const RecommendedMoviesScreen(),
               ),
             );
           },
-        );
-      },
+          child: const Text('See All'),
+        ),
+      ],
     );
   }
 
@@ -268,7 +272,6 @@ class SubHomeScreenState extends State<SubHomeScreen> {
   @override
   void dispose() {
     trendingController.dispose();
-    recommendedController.dispose();
     super.dispose();
   }
 }
