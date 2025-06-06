@@ -103,9 +103,34 @@ class TMDBApi {
     }
   }
 
-  /// Fetches recommended movies.
-  static Future<List<dynamic>> fetchRecommendedMovies() async {
-    return await fetchRecommendations();
+  /// Fetches recommended movies with pagination, returning movies and total pages.
+  static Future<Map<String, dynamic>> fetchRecommendedMovies(
+      {int page = 1}) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/movie/popular?api_key=$apiKey&page=$page'),
+      );
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return {
+          'movies': data['results'],
+          'total_pages': data['total_pages'],
+        };
+      } else {
+        throw Exception(
+            'Failed to load recommended movies: ${response.statusCode} - ${response.reasonPhrase}');
+      }
+    } on http.ClientException catch (e) {
+      throw Exception('Network error: Failed to connect to TMDB API - $e');
+    } catch (e) {
+      throw Exception('Unexpected error while fetching recommended movies: $e');
+    }
+  }
+
+  /// Fetches recommended movies as a list (legacy support for non-paginated use cases).
+  static Future<List<dynamic>> fetchRecommendedMoviesList() async {
+    final result = await fetchRecommendedMovies(page: 1);
+    return result['movies'];
   }
 
   /// Fetches the list of movie genres.
