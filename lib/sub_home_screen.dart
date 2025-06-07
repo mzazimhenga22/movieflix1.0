@@ -4,8 +4,7 @@ import 'package:movie_app/settings_provider.dart';
 import 'package:movie_app/tmdb_api.dart' as tmdb;
 import 'package:movie_app/movie_detail_screen.dart';
 import 'package:movie_app/components/movie_card.dart';
-import 'package:shimmer/shimmer.dart';
-import 'recommended_movies_screen.dart'; // Import the new screen
+import 'recommended_movies_screen.dart';
 
 /// SubHomeScreen widget: Handles trending and recommended movies sections
 class SubHomeScreen extends StatefulWidget {
@@ -31,7 +30,7 @@ class SubHomeScreenState extends State<SubHomeScreen> {
 
   Future<void> fetchInitialData() async {
     await fetchTrendingMovies();
-    await fetchRecommendedMovies(page: 1); // Fetch only the first page
+    await fetchRecommendedMovies(page: 1);
   }
 
   Future<void> fetchTrendingMovies() async {
@@ -49,8 +48,7 @@ class SubHomeScreenState extends State<SubHomeScreen> {
     setState(() => isLoadingRecommended = true);
     final response = await tmdb.TMDBApi.fetchRecommendedMovies(page: page);
     setState(() {
-      recommendedMovies =
-          response['movies']; // Replace, don’t append, for page 1 only
+      recommendedMovies = response['movies'];
       isLoadingRecommended = false;
     });
   }
@@ -70,46 +68,42 @@ class SubHomeScreenState extends State<SubHomeScreen> {
   }
 
   Widget buildMovieCardPlaceholder() {
-    return Shimmer.fromColors(
-      baseColor: Colors.grey[800]!,
-      highlightColor: Colors.grey[600]!,
-      child: Container(
-        width: 120,
-        margin: const EdgeInsets.all(8.0),
-        decoration: BoxDecoration(
-          color: Colors.grey[800],
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Column(
-          children: [
-            Expanded(
-              child: Container(
-                decoration: BoxDecoration(
+    return Container(
+      width: 120,
+      margin: const EdgeInsets.all(8.0),
+      decoration: BoxDecoration(
+        color: Colors.grey[800],
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        children: [
+          Expanded(
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.grey[900],
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: Column(
+              children: [
+                Container(
+                  width: 80,
+                  height: 10,
                   color: Colors.grey[900],
-                  borderRadius: BorderRadius.circular(12),
                 ),
-              ),
+                const SizedBox(height: 4),
+                Container(
+                  width: 40,
+                  height: 10,
+                  color: Colors.grey[900],
+                ),
+              ],
             ),
-            Padding(
-              padding: const EdgeInsets.all(8.0),
-              child: Column(
-                children: [
-                  Container(
-                    width: 80,
-                    height: 10,
-                    color: Colors.grey[900],
-                  ),
-                  const SizedBox(height: 4),
-                  Container(
-                    width: 40,
-                    height: 10,
-                    color: Colors.grey[900],
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -139,7 +133,7 @@ class SubHomeScreenState extends State<SubHomeScreen> {
           if (movie == null) return const SizedBox();
           final posterPath = movie['poster_path'];
           final posterUrl = posterPath != null
-              ? 'https://image.tmdb.org/t/p/w342$posterPath' // Smaller image size
+              ? 'https://image.tmdb.org/t/p/w342$posterPath'
               : '';
           return MovieCard(
             imageUrl: posterUrl,
@@ -189,13 +183,14 @@ class SubHomeScreenState extends State<SubHomeScreen> {
             mainAxisSpacing: 10,
             crossAxisSpacing: 10,
           ),
-          itemCount: recommendedMovies.length,
+          itemCount:
+              recommendedMovies.length > 6 ? 6 : recommendedMovies.length,
           itemBuilder: (context, index) {
             final movie = recommendedMovies[index];
             if (movie == null) return const SizedBox();
             final posterPath = movie['poster_path'];
             final posterUrl = posterPath != null
-                ? 'https://image.tmdb.org/t/p/w342$posterPath' // Smaller image size
+                ? 'https://image.tmdb.org/t/p/w342$posterPath'
                 : '';
             return MovieCard(
               imageUrl: posterUrl,
