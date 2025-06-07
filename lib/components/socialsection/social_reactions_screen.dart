@@ -8,6 +8,7 @@ import 'package:movie_app/helpers/movie_account_helper.dart';
 import 'package:movie_app/database/auth_database.dart';
 import 'package:movie_app/components/trending_movies_widget.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:uuid/uuid.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -233,20 +234,38 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
 
   Future<void> _loadUserData() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final email = prefs.getString('currentUserEmail');
-      if (email != null) {
-        final userData = await AuthDatabase.instance.getUserByEmail(email);
+      final currentUser = FirebaseAuth.instance.currentUser;
+      if (currentUser != null) {
+        final userData =
+            await AuthDatabase.instance.getUserById(currentUser.uid);
         if (!mounted) return;
-        setState(() => _currentUser = userData);
-      } else if (_users.isNotEmpty) {
-        _currentUser = _users.first;
-        await prefs.setString('currentUserEmail', _currentUser!['email']);
+        setState(() {
+          _currentUser = userData;
+        });
+        if (userData == null) {
+          debugPrint('No user data found for UID: ${currentUser.uid}');
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("User data not found")),
+          );
+        }
+      } else {
         if (!mounted) return;
-        setState(() {});
+        setState(() {
+          _currentUser = null;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Please log in to view your profile")),
+        );
       }
     } catch (e) {
       debugPrint('Error loading user data: $e');
+      if (!mounted) return;
+      setState(() {
+        _currentUser = null;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Error loading profile: $e")),
+      );
     }
   }
 
@@ -272,7 +291,8 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
       'auth_provider': user['auth_provider']?.toString() ?? '',
       'token': user['token']?.toString() ?? '',
       'created_at': user['created_at']?.toString() ?? '',
-      'updated_at': user['updated_at']?.toString() ?? '',
+      'updated_at':
+          user['updated_at']?.toString() ?? DateTime.now().toIso8601String(),
       'followers_count': user['followers_count']?.toString() ?? '0',
       'following_count': user['following_count']?.toString() ?? '0',
       'avatar': user['avatar']?.toString() ?? 'https://via.placeholder.com/200',
@@ -700,7 +720,7 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
             'season': result['season'],
             'episode': result['episode'],
             'media': mediaUrl,
-            'mediaType': result['mediaType'] ?? '',
+            'mediaType': mediaUrl != null ? result['mediaType'] ?? '' : '',
             'timestamp': DateTime.now().toIso8601String(),
           };
           final docRef = await FirebaseFirestore.instance
@@ -759,10 +779,23 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
               if (!snapshot.hasData) {
                 return const Center(child: CircularProgressIndicator());
               }
-              final posts = snapshot.data!.docs
-                  .map((doc) =>
-                      {...doc.data() as Map<String, dynamic>, 'id': doc.id})
-                  .toList();
+              final posts = snapshot.data!.docs.map((doc) {
+                final data = doc.data() as Map<String, dynamic>;
+                return {
+                  'id': doc.id,
+                  'user': data['user']?.toString() ?? 'Unknown',
+                  'post': data['post']?.toString() ?? '',
+                  'type': data['type']?.toString() ?? '',
+                  'likedBy': List<String>.from(data['likedBy'] ?? []),
+                  'title': data['title']?.toString() ?? '',
+                  'season': data['season']?.toString() ?? '',
+                  'episode': data['episode']?.toString() ?? '',
+                  'media': data['media']?.toString(), // Can be null
+                  'mediaType': data['mediaType']?.toString() ?? '',
+                  'timestamp': data['timestamp']?.toString() ?? '',
+                  'userId': data['userId']?.toString() ?? '',
+                };
+              }).toList();
               if (posts.isEmpty) {
                 return const Center(
                     child: Text("No posts available.",
@@ -870,32 +903,35 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
                             blurRadius: 2)
                       ])),
             ),
-            if (post['media'] != null && post['media'].isNotEmpty)
+            if (post['media'] != null && post['media']!.isNotEmpty)
               if (post['mediaType'] == 'photo' &&
-                  isValidImageUrl(post['media']))
+                  isValidImageUrl(post['media'] as String?))
                 CachedNetworkImage(
-                    imageUrl: post['media'],
+                  imageUrl: post['media'] as String,
+                  height: 250,
+                  width: double.infinity,
+                  fit: BoxFit.cover,
+                  placeholder: (context, url) =>
+                      const Center(child: CircularProgressIndicator()),
+                  errorWidget: (context, url, error) => Container(
                     height: 250,
-                    width: double.infinity,
-                    fit: BoxFit.cover,
-                    placeholder: (context, url) =>
-                        const Center(child: CircularProgressIndicator()),
-                    errorWidget: (context, url, error) => Container(
-                        height: 250,
-                        color: Colors.grey[300],
-                        child: const Center(
-                            child: Icon(Icons.broken_image, size: 40))))
-              else if (post['mediaType'] == 'video')
+                    color: Colors.grey[300],
+                    child:
+                        const Center(child: Icon(Icons.broken_image, size: 40)),
+                  ),
+                )
+              else if (post['mediaType'] == 'video' && post['media'] != null)
                 Container(
                   height: 250,
                   child: VideoPlayer(
-                    videoUrl: post['media'],
+                    videoUrl: post['media'] as String,
                     autoPlay: true,
                     onTap: () {
                       final videoPosts = allPosts
-                          .where((p) => p['mediaType'] == 'video')
+                          .where((p) =>
+                              p['mediaType'] == 'video' && p['media'] != null)
                           .map((p) => Reel(
-                                videoUrl: p['media'],
+                                videoUrl: p['media'] as String,
                                 movieTitle: p['title'] ?? 'Video',
                                 movieDescription: p['post'] ?? '',
                               ))
@@ -918,33 +954,33 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
                 )
               else
                 Container(
-                    height: 250,
-                    color: Colors.grey[300],
-                    child: const Center(child: Icon(Icons.image, size: 40))),
+                  height: 250,
+                  color: Colors.grey[300],
+                  child: const Center(child: Icon(Icons.image, size: 40)),
+                ),
             Padding(
               padding: const EdgeInsets.all(12),
               child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(post['post'] ?? '',
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(post['post'] ?? '',
+                      style:
+                          const TextStyle(fontSize: 15, color: Colors.white70)),
+                  if ((post['season']?.isNotEmpty ?? false)) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                        "Season: ${post['season']}, Episode: ${post['episode'] ?? 'N/A'}",
                         style: const TextStyle(
-                            fontSize: 15, color: Colors.white70)),
-                    if (post['season']?.isNotEmpty ?? false) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                          "Season: ${post['season']}, Episode: ${post['episode'] ?? 'N/A'}",
-                          style: const TextStyle(
-                              fontStyle: FontStyle.italic,
-                              color: Colors.white70))
-                    ],
-                    if (post['title']?.isNotEmpty ?? false) ...[
-                      const SizedBox(height: 8),
-                      Text("Movie: ${post['title'] ?? 'Unknown'}",
-                          style: const TextStyle(
-                              fontStyle: FontStyle.italic,
-                              color: Colors.white70))
-                    ]
-                  ]),
+                            fontStyle: FontStyle.italic, color: Colors.white70))
+                  ],
+                  if ((post['title']?.isNotEmpty ?? false)) ...[
+                    const SizedBox(height: 8),
+                    Text("Movie: ${post['title'] ?? 'Unknown'}",
+                        style: const TextStyle(
+                            fontStyle: FontStyle.italic, color: Colors.white70))
+                  ]
+                ],
+              ),
             ),
             const Divider(color: Colors.white54, height: 1),
             Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
