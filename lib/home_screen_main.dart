@@ -627,7 +627,7 @@ class FeaturedSliderState extends State<FeaturedSlider> {
                 final trailerUrl = item['trailer_url'] ??
                     'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
                 return FeaturedMovieCard(
-                  key: ValueKey(imageUrl), // Ensure widget reuse
+                  key: ValueKey(imageUrl),
                   imageUrl: imageUrl,
                   title: title,
                   releaseDate: releaseDate,
@@ -666,7 +666,6 @@ class HomeScreenMainState extends State<HomeScreenMain>
   late Animation<double> _textFadeAnimation;
   final _subHomeScreenKey = GlobalKey<SubHomeScreenState>();
 
-  // Static cache for navigation items
   static const _navItems = [
     BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
     BottomNavigationBarItem(icon: Icon(Icons.category), label: 'Categories'),
@@ -717,7 +716,7 @@ class HomeScreenMainState extends State<HomeScreenMain>
 
   @override
   Widget build(BuildContext context) {
-    super.build(context); // Required for AutomaticKeepAliveClientMixin
+    super.build(context);
     final screenHeight = MediaQuery.of(context).size.height;
     return Selector<SettingsProvider, Color>(
       selector: (_, settings) => settings.accentColor,
@@ -773,206 +772,218 @@ class HomeScreenMainState extends State<HomeScreenMain>
               ),
             ],
           ),
-          body: Stack(
-            children: [
-              const AnimatedBackground(),
-              Positioned.fill(
-                child: Container(
-                  decoration: BoxDecoration(
-                    gradient: RadialGradient(
-                      center: const Alignment(-0.06, -0.34),
-                      radius: 1.0,
-                      colors: [
-                        accentColor.withOpacity(0.5),
-                        const Color.fromARGB(255, 0, 0, 0),
-                      ],
-                      stops: const [0.0, 0.59],
-                    ),
-                  ),
-                ),
-              ),
-              Positioned.fill(
-                child: Container(
-                  decoration: BoxDecoration(
-                    gradient: RadialGradient(
-                      center: const Alignment(0.64, 0.3),
-                      radius: 1.0,
-                      colors: [
-                        accentColor.withOpacity(0.3),
-                        Colors.transparent,
-                      ],
-                      stops: const [0.0, 0.55],
-                    ),
-                  ),
-                ),
-              ),
-              Positioned.fill(
-                child: Padding(
-                  padding: const EdgeInsets.all(8.0),
+          body: RepaintBoundary(
+            child: Stack(
+              children: [
+                const AnimatedBackground(),
+                Positioned.fill(
                   child: Container(
                     decoration: BoxDecoration(
                       gradient: RadialGradient(
-                        center: Alignment.center,
-                        radius: 1.5,
+                        center: const Alignment(-0.06, -0.34),
+                        radius: 1.0,
+                        colors: [
+                          accentColor.withOpacity(0.5),
+                          const Color.fromARGB(255, 0, 0, 0),
+                        ],
+                        stops: const [0.0, 0.59],
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned.fill(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      gradient: RadialGradient(
+                        center: const Alignment(0.64, 0.3),
+                        radius: 1.0,
                         colors: [
                           accentColor.withOpacity(0.3),
                           Colors.transparent,
                         ],
-                        stops: const [0.0, 1.0],
+                        stops: const [0.0, 0.55],
                       ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: accentColor.withOpacity(0.5),
-                          blurRadius: 12,
-                          spreadRadius: 2,
-                          offset: const Offset(0, 6),
-                        ),
-                      ],
                     ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: BackdropFilter(
-                        filter: ImageFilter.blur(sigmaX: 10.0, sigmaY: 10.0),
-                        child: Container(
-                          decoration: const BoxDecoration(
-                            color: Color.fromARGB(160, 17, 19, 40),
-                            borderRadius: BorderRadius.all(Radius.circular(12)),
-                            border: Border(
-                              top: BorderSide(
-                                  color: Color.fromRGBO(255, 255, 255, 0.125)),
-                              bottom: BorderSide(
-                                  color: Color.fromRGBO(255, 255, 255, 0.125)),
-                              left: BorderSide(
-                                  color: Color.fromRGBO(255, 255, 255, 0.125)),
-                              right: BorderSide(
-                                  color: Color.fromRGBO(255, 255, 255, 0.125)),
-                            ),
+                  ),
+                ),
+                Positioned.fill(
+                  child: Padding(
+                    padding: const EdgeInsets.all(8.0),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        gradient: RadialGradient(
+                          center: Alignment.center,
+                          radius: 1.5,
+                          colors: [
+                            accentColor.withOpacity(0.3),
+                            Colors.transparent,
+                          ],
+                          stops: const [0.0, 1.0],
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: accentColor.withOpacity(0.5),
+                            blurRadius: 12,
+                            spreadRadius: 2,
+                            offset: const Offset(0, 6),
                           ),
-                          child: RefreshIndicator(
-                            onRefresh: refreshData,
-                            child: ConstrainedBox(
-                              constraints:
-                                  BoxConstraints(minHeight: screenHeight),
-                              child: SingleChildScrollView(
-                                physics: const AlwaysScrollableScrollPhysics(),
-                                child: SafeArea(
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(16.0),
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        const StoriesSection(),
-                                        const SizedBox(height: 10),
-                                        const FeaturedSlider(),
-                                        const SizedBox(height: 20),
-                                        Padding(
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 16.0),
-                                          child: Material(
-                                            color: Colors.transparent,
-                                            child: GestureDetector(
-                                              onTap: () {
-                                                Navigator.push(
-                                                  context,
-                                                  MaterialPageRoute(
-                                                      builder: (context) =>
-                                                          const SongOfMoviesScreen()),
-                                                );
-                                              },
-                                              child: Container(
-                                                height: 180,
-                                                decoration: BoxDecoration(
-                                                  borderRadius:
-                                                      BorderRadius.circular(24),
-                                                  gradient: LinearGradient(
-                                                    colors: [
-                                                      accentColor
-                                                          .withOpacity(0.2),
-                                                      accentColor
-                                                          .withOpacity(0.2),
+                        ],
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: BackdropFilter(
+                          filter: ImageFilter.blur(sigmaX: 10.0, sigmaY: 10.0),
+                          child: Container(
+                            decoration: const BoxDecoration(
+                              color: Color.fromARGB(160, 17, 19, 40),
+                              borderRadius:
+                                  BorderRadius.all(Radius.circular(12)),
+                              border: Border(
+                                top: BorderSide(
+                                    color:
+                                        Color.fromRGBO(255, 255, 255, 0.125)),
+                                bottom: BorderSide(
+                                    color:
+                                        Color.fromRGBO(255, 255, 255, 0.125)),
+                                left: BorderSide(
+                                    color:
+                                        Color.fromRGBO(255, 255, 255, 0.125)),
+                                right: BorderSide(
+                                    color:
+                                        Color.fromRGBO(255, 255, 255, 0.125)),
+                              ),
+                            ),
+                            child: RefreshIndicator(
+                              onRefresh: refreshData,
+                              child: ConstrainedBox(
+                                constraints:
+                                    BoxConstraints(minHeight: screenHeight),
+                                child: SingleChildScrollView(
+                                  physics:
+                                      const AlwaysScrollableScrollPhysics(),
+                                  child: SafeArea(
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(16.0),
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          const StoriesSection(),
+                                          const SizedBox(height: 10),
+                                          const FeaturedSlider(),
+                                          const SizedBox(height: 20),
+                                          Padding(
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 16.0),
+                                            child: Material(
+                                              color: Colors.transparent,
+                                              child: GestureDetector(
+                                                onTap: () {
+                                                  Navigator.push(
+                                                    context,
+                                                    MaterialPageRoute(
+                                                        builder: (context) =>
+                                                            const SongOfMoviesScreen()),
+                                                  );
+                                                },
+                                                child: Container(
+                                                  height: 180,
+                                                  decoration: BoxDecoration(
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                            24),
+                                                    gradient: LinearGradient(
+                                                      colors: [
+                                                        accentColor
+                                                            .withOpacity(0.2),
+                                                        accentColor
+                                                            .withOpacity(0.2),
+                                                      ],
+                                                      begin: Alignment.topLeft,
+                                                      end:
+                                                          Alignment.bottomRight,
+                                                    ),
+                                                    boxShadow: [
+                                                      BoxShadow(
+                                                        color: accentColor
+                                                            .withOpacity(0.6),
+                                                        blurRadius: 12,
+                                                        offset:
+                                                            const Offset(0, 6),
+                                                      ),
                                                     ],
-                                                    begin: Alignment.topLeft,
-                                                    end: Alignment.bottomRight,
                                                   ),
-                                                  boxShadow: [
-                                                    BoxShadow(
-                                                      color: accentColor
-                                                          .withOpacity(0.6),
-                                                      blurRadius: 12,
-                                                      offset:
-                                                          const Offset(0, 6),
-                                                    ),
-                                                  ],
-                                                ),
-                                                child: Stack(
-                                                  alignment: Alignment.center,
-                                                  children: [
-                                                    Icon(
-                                                      Icons.music_note,
-                                                      color: Colors.white
-                                                          .withOpacity(0.3),
-                                                      size: 120,
-                                                    ),
-                                                    Container(
-                                                      decoration:
-                                                          const BoxDecoration(
-                                                        borderRadius:
-                                                            BorderRadius.all(
-                                                                Radius.circular(
-                                                                    24)),
-                                                        gradient:
-                                                            LinearGradient(
-                                                          colors: [
-                                                            Color.fromRGBO(
-                                                                0, 0, 0, 0.2),
-                                                            Colors.transparent,
-                                                          ],
-                                                          begin: Alignment
-                                                              .bottomCenter,
-                                                          end: Alignment
-                                                              .topCenter,
+                                                  child: Stack(
+                                                    alignment: Alignment.center,
+                                                    children: [
+                                                      Icon(
+                                                        Icons.music_note,
+                                                        color: Colors.white
+                                                            .withOpacity(0.3),
+                                                        size: 120,
+                                                      ),
+                                                      Container(
+                                                        decoration:
+                                                            const BoxDecoration(
+                                                          borderRadius:
+                                                              BorderRadius.all(
+                                                                  Radius
+                                                                      .circular(
+                                                                          24)),
+                                                          gradient:
+                                                              LinearGradient(
+                                                            colors: [
+                                                              Color.fromRGBO(
+                                                                  0, 0, 0, 0.2),
+                                                              Colors
+                                                                  .transparent,
+                                                            ],
+                                                            begin: Alignment
+                                                                .bottomCenter,
+                                                            end: Alignment
+                                                                .topCenter,
+                                                          ),
                                                         ),
                                                       ),
-                                                    ),
-                                                    const Positioned(
-                                                      bottom: 20,
-                                                      child: Text(
-                                                        'Song of Movies',
-                                                        style: TextStyle(
-                                                          color: Colors.white,
-                                                          fontSize: 32,
-                                                          fontWeight:
-                                                              FontWeight.bold,
-                                                          shadows: [
-                                                            Shadow(
-                                                              blurRadius: 4,
-                                                              color: Colors
-                                                                  .black54,
-                                                              offset:
-                                                                  Offset(2, 2),
-                                                            ),
-                                                          ],
+                                                      const Positioned(
+                                                        bottom: 20,
+                                                        child: Text(
+                                                          'Song of Movies',
+                                                          style: TextStyle(
+                                                            color: Colors.white,
+                                                            fontSize: 32,
+                                                            fontWeight:
+                                                                FontWeight.bold,
+                                                            shadows: [
+                                                              Shadow(
+                                                                blurRadius: 4,
+                                                                color: Colors
+                                                                    .black54,
+                                                                offset: Offset(
+                                                                    2, 2),
+                                                              ),
+                                                            ],
+                                                          ),
                                                         ),
                                                       ),
-                                                    ),
-                                                  ],
+                                                    ],
+                                                  ),
                                                 ),
                                               ),
                                             ),
                                           ),
-                                        ),
-                                        const SizedBox(height: 20),
-                                        const SizedBox(
-                                          height: 400,
-                                          child: Opacity(
-                                            opacity: 0.7,
-                                            child: ReelsSection(),
+                                          const SizedBox(height: 20),
+                                          const SizedBox(
+                                            height: 400,
+                                            child: Opacity(
+                                              opacity: 0.7,
+                                              child: ReelsSection(),
+                                            ),
                                           ),
-                                        ),
-                                        const SizedBox(height: 20),
-                                        SubHomeScreen(key: _subHomeScreenKey),
-                                      ],
+                                          const SizedBox(height: 20),
+                                          SubHomeScreen(key: _subHomeScreenKey),
+                                        ],
+                                      ),
                                     ),
                                   ),
                                 ),
@@ -984,8 +995,8 @@ class HomeScreenMainState extends State<HomeScreenMain>
                     ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
           floatingActionButton: FloatingActionButton(
             backgroundColor: accentColor,
