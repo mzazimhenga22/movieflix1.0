@@ -58,10 +58,10 @@ class StreamingService {
       'title': title,
       'releaseYear': DateTime.now().year.toString(),
       if (isShow) ...{
-        'seasonNumber': season.toString(),
-        'seasonTmdbId': seasonTmdbId ?? tmdbId,
-        'episodeNumber': episode.toString(),
-        'episodeTmdbId': episodeTmdbId ?? tmdbId,
+        'seasonNumber': season, // Send as integer
+        'seasonTmdbId': int.parse(seasonTmdbId ?? tmdbId), // Parse to integer
+        'episodeNumber': episode, // Send as integer
+        'episodeTmdbId': int.parse(episodeTmdbId ?? tmdbId), // Parse to integer
       }
     };
 
