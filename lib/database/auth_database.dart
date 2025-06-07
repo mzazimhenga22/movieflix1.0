@@ -59,6 +59,19 @@ class AuthDatabase {
         onCreate: _createSQLiteDB,
       );
       debugPrint('SQLite database opened at $path');
+      // Verify tables exist
+      final tables = [
+        'users',
+        'profiles',
+        'messages',
+        'conversations',
+        'followers'
+      ];
+      for (var table in tables) {
+        if (!await _tableExists(db, table)) {
+          debugPrint('Warning: Table $table does not exist');
+        }
+      }
       return db;
     } catch (e) {
       debugPrint('Failed to initialize SQLite database: $e');
