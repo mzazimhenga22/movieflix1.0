@@ -1,35 +1,96 @@
 workflows:
-  flutter-workflow:
-    name: Build Flutter App
+  android-arm:
+    name: Android ARM Build
     environment:
       flutter: stable
       xcode: latest
       cocoapods: default
-
     scripts:
-      # 1) Install Pub dependencies
       - name: Install dependencies
         script: flutter pub get
-
-      # 2) Generate app icons using flutter_launcher_icons
       - name: Generate app icons
         script: flutter pub run flutter_launcher_icons:main
-
-      # 3) Clean any stale build outputs
       - name: Clean previous build artifacts
         script: |
           flutter clean
           rm -rf android/app/build
-
-      # 4) Give Gradle more heap (4.5 GB) to avoid splitter OOM
       - name: Ensure Gradle JVM args
         script: |
           grep -qxF 'org.gradle.jvmargs=-Xmx4608m' android/gradle.properties \
             || echo 'org.gradle.jvmargs=-Xmx4608m' >> android/gradle.properties
+      - name: Build ARM APK
+        script: flutter build apk --release --target-platform android-arm
+    artifacts:
+      - build/app/outputs/flutter-apk/app-release.apk
 
-      # 5) Build the release APK
-      - name: Build APK
-        script: flutter build apk --release
+  android-arm64:
+    name: Android ARM64 Build
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+    scripts:
+      - name: Install dependencies
+        script: flutter pub get
+      - name: Generate app icons
+        script: flutter pub run flutter_launcher_icons:main
+      - name: Clean previous build artifacts
+        script: |
+          flutter clean
+          rm -rf android/app/build
+      - name: Ensure Gradle JVM args
+        script: |
+          grep -qxF 'org.gradle.jvmargs=-Xmx4608m' android/gradle.properties \
+            || echo 'org.gradle.jvmargs=-Xmx4608m' >> android/gradle.properties
+      - name: Build ARM64 APK
+        script: flutter build apk --release --target-platform android-arm64
+    artifacts:
+      - build/app/outputs/flutter-apk/app-release.apk
 
+  android-x86:
+    name: Android x86 Build
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+    scripts:
+      - name: Install dependencies
+        script: flutter pub get
+      - name: Generate app icons
+        script: flutter pub run flutter_launcher_icons:main
+      - name: Clean previous build artifacts
+        script: |
+          flutter clean
+          rm -rf android/app/build
+      - name: Ensure Gradle JVM args
+        script: |
+          grep -qxF 'org.gradle.jvmargs=-Xmx4608m' android/gradle.properties \
+            || echo 'org.gradle.jvmargs=-Xmx4608m' >> android/gradle.properties
+      - name: Build x86 APK
+        script: flutter build apk --release --target-platform android-x86
+    artifacts:
+      - build/app/outputs/flutter-apk/app-release.apk
+
+  android-x86_64:
+    name: Android x86_64 Build
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+    scripts:
+      - name: Install dependencies
+        script: flutter pub get
+      - name: Generate app icons
+        script: flutter pub run flutter_launcher_icons:main
+      - name: Clean previous build artifacts
+        script: |
+          flutter clean
+          rm -rf android/app/build
+      - name: Ensure Gradle JVM args
+        script: |
+          grep -qxF 'org.gradle.jvmargs=-Xmx4608m' android/gradle.properties \
+            || echo 'org.gradle.jvmargs=-Xmx4608m' >> android/gradle.properties
+      - name: Build x86_64 APK
+        script: flutter build apk --release --target-platform android-x86_64
     artifacts:
       - build/app/outputs/flutter-apk/app-release.apk
