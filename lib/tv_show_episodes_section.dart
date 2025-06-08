@@ -34,6 +34,7 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
   bool _isVisible = false;
   bool _fetchError = false;
   String _errorMessage = '';
+  int? _releaseYear;
 
   @override
   void initState() {
@@ -43,6 +44,23 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
     _selectedSeasonNumber = widget.seasons.isNotEmpty
         ? (widget.seasons.first['season_number'] as int? ?? 1)
         : 1;
+    _fetchTVShowDetails(); // Fetch TV show details to get release year
+  }
+
+  Future<void> _fetchTVShowDetails() async {
+    try {
+      final tvDetails = await tmdb.TMDBApi.fetchTVShowDetails(widget.tvId);
+      final firstAirDate =
+          tvDetails['first_air_date'] as String? ?? '1970-01-01';
+      setState(() {
+        _releaseYear = int.parse(firstAirDate.split('-')[0]);
+      });
+    } catch (e) {
+      debugPrint('Failed to fetch TV show details: $e');
+      setState(() {
+        _releaseYear = 1970; // Fallback
+      });
+    }
   }
 
   @override
@@ -167,6 +185,7 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
                   title: widget.tvShowName.isNotEmpty
                       ? widget.tvShowName
                       : episodeName,
+                  releaseYear: _releaseYear ?? 1970,
                   season: seasonNumber,
                   episode: episodeNumber,
                   resolution: resolution,
@@ -251,6 +270,7 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
                   builder: (context) => MainVideoPlayer(
                     videoPath: streamUrl,
                     title: streamingInfo['title'] as String? ?? episodeName,
+                    releaseYear: _releaseYear ?? 1970,
                     isHls: isHls,
                     subtitleUrl: subtitleUrl,
                     isFullSeason: true,
@@ -642,4 +662,3 @@ class LoadingDialogState extends State<LoadingDialog> {
     );
   }
 }
-
