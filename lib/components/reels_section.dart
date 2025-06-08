@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:movie_app/tmdb_api.dart';
 import 'package:shimmer/shimmer.dart';
 import '../reel_player_screen.dart';
@@ -20,13 +21,12 @@ class _ReelsSectionState extends State<ReelsSection>
   late Animation<double> _shineAnimation;
   bool _isInitialized = false;
 
-  // Cache the loading widget as a shimmer placeholder
   static final _loadingWidget = Shimmer.fromColors(
     baseColor: Colors.grey[800]!,
     highlightColor: Colors.grey[600]!,
     child: ListView.builder(
       scrollDirection: Axis.horizontal,
-      itemCount: 3, // Show 3 placeholder cards
+      itemCount: 3,
       itemBuilder: (context, index) {
         return Padding(
           padding: const EdgeInsets.symmetric(horizontal: 10.0, vertical: 20.0),
@@ -52,7 +52,7 @@ class _ReelsSectionState extends State<ReelsSection>
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 2),
-    )..repeat();
+    )..forward(); // Run once
     _shineAnimation = Tween<double>(begin: 0, end: 1).animate(
       CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
     );
@@ -96,7 +96,7 @@ class _ReelsSectionState extends State<ReelsSection>
 
   @override
   Widget build(BuildContext context) {
-    super.build(context); // Required for AutomaticKeepAliveClientMixin
+    super.build(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -164,7 +164,6 @@ class _ReelsSectionState extends State<ReelsSection>
                     final reel = reelsData[index];
                     final title = reel['title'] as String? ?? "Reel";
                     final thumbnailUrl = reel['thumbnail_url'] as String? ?? "";
-                    // Precompute reels list for navigation
                     final List<Reel> reels = reelsData.map<Reel>((r) {
                       return Reel(
                         videoUrl: r['videoUrl'] as String? ?? "",
@@ -177,7 +176,7 @@ class _ReelsSectionState extends State<ReelsSection>
                       padding: const EdgeInsets.symmetric(
                           horizontal: 10.0, vertical: 20.0),
                       child: GestureDetector(
-                        key: ValueKey(thumbnailUrl), // Ensure widget reuse
+                        key: ValueKey(thumbnailUrl),
                         onTap: () {
                           Navigator.push(
                             context,
@@ -242,27 +241,25 @@ class _ReelsSectionState extends State<ReelsSection>
                                     Positioned.fill(
                                       child: ClipRRect(
                                         borderRadius: BorderRadius.circular(20),
-                                        child: thumbnailUrl.isNotEmpty
-                                            ? Image.network(
-                                                thumbnailUrl,
-                                                fit: BoxFit.cover,
-                                                errorBuilder: (context, error,
-                                                        stackTrace) =>
-                                                    const ColoredBox(
-                                                  color: Color.fromRGBO(
-                                                      33, 33, 33, 1),
-                                                  child: Icon(Icons.error,
-                                                      color: Colors.red,
-                                                      size: 40),
-                                                ),
-                                              )
-                                            : const ColoredBox(
-                                                color: Color.fromRGBO(
-                                                    33, 33, 33, 1),
-                                                child: Icon(Icons.movie,
-                                                    color: Colors.white70,
-                                                    size: 40),
-                                              ),
+                                        child: CachedNetworkImage(
+                                          imageUrl: thumbnailUrl,
+                                          fit: BoxFit.cover,
+                                          placeholder: (context, url) =>
+                                              const ColoredBox(
+                                            color:
+                                                Color.fromRGBO(33, 33, 33, 1),
+                                            child: Center(
+                                                child:
+                                                    CircularProgressIndicator()),
+                                          ),
+                                          errorWidget: (context, url, error) =>
+                                              const ColoredBox(
+                                            color:
+                                                Color.fromRGBO(33, 33, 33, 1),
+                                            child: Icon(Icons.error,
+                                                color: Colors.red, size: 40),
+                                          ),
+                                        ),
                                       ),
                                     ),
                                     Positioned.fill(
@@ -347,3 +344,4 @@ class _ReelsSectionState extends State<ReelsSection>
     );
   }
 }
+
