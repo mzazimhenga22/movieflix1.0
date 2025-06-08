@@ -36,7 +36,6 @@ class _FeaturedMovieCardState extends State<FeaturedMovieCard>
   YoutubePlayerController? _videoController;
   String? _genresText;
 
-  // Static cache for genre map and widgets
   static const Map<int, String> _genreMap = {
     28: "Action",
     12: "Adventure",
@@ -119,7 +118,7 @@ class _FeaturedMovieCardState extends State<FeaturedMovieCard>
 
   @override
   Widget build(BuildContext context) {
-    super.build(context); // Required for AutomaticKeepAliveClientMixin
+    super.build(context);
     return GestureDetector(
       onTap: widget.onTap,
       child: Padding(
