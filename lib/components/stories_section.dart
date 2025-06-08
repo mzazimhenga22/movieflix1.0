@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:movie_app/tmdb_api.dart' as tmdb;
 import 'package:shimmer/shimmer.dart';
 import '../story_player_screen.dart';
@@ -21,7 +22,6 @@ class _StoriesSectionState extends State<StoriesSection>
   Timer? _timer;
   static const int _itemsPerPage = 4;
 
-  // Cache the loading widget as a shimmer placeholder
   static final _loadingWidget = Shimmer.fromColors(
     baseColor: Colors.grey[800]!,
     highlightColor: Colors.grey[600]!,
@@ -62,7 +62,7 @@ class _StoriesSectionState extends State<StoriesSection>
   @override
   void initState() {
     super.initState();
-    _pageController = PageController();
+    _pageController = PageController(viewportFraction: 1.0);
     if (_cachedStories.isNotEmpty) {
       _stories = _cachedStories;
       _startTimer();
@@ -216,7 +216,7 @@ class _StoriesSectionState extends State<StoriesSection>
 
   void _startTimer() {
     _timer?.cancel();
-    _timer = Timer.periodic(const Duration(seconds: 3), (timer) {
+    _timer = Timer.periodic(const Duration(seconds: 7), (timer) {
       if (_pageController.hasClients && _stories.isNotEmpty) {
         final int pageCount = (_stories.length / _itemsPerPage).ceil();
         _currentIndex = (_currentIndex + 1) % pageCount;
@@ -255,7 +255,7 @@ class _StoriesSectionState extends State<StoriesSection>
 
   @override
   Widget build(BuildContext context) {
-    super.build(context); // Required for AutomaticKeepAliveClientMixin
+    super.build(context);
     if (_stories.isEmpty) {
       return _loadingWidget;
     }
@@ -276,7 +276,7 @@ class _StoriesSectionState extends State<StoriesSection>
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: pageStories.map((story) {
                 return GestureDetector(
-                  key: ValueKey(story['imageUrl']), // Ensure widget reuse
+                  key: ValueKey(story['imageUrl']),
                   onTap: () => _openStory(story),
                   child: Column(
                     children: [
@@ -288,8 +288,8 @@ class _StoriesSectionState extends State<StoriesSection>
                         ),
                         child: CircleAvatar(
                           radius: 35,
-                          backgroundImage:
-                              NetworkImage(story['imageUrl'] as String),
+                          backgroundImage: CachedNetworkImageProvider(
+                              story['imageUrl'] as String),
                         ),
                       ),
                       const SizedBox(height: 8),
@@ -316,3 +316,4 @@ class _StoriesSectionState extends State<StoriesSection>
     );
   }
 }
+
