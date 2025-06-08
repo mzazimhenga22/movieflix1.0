@@ -233,6 +233,9 @@ Widget buildInviteeWaitingView(
 Widget buildPartyView(BuildContext context, WatchPartyScreenState state) {
   final chatWidth = MediaQuery.of(context).size.width * 0.35;
 
+  // Fallback release year if movie data is unavailable
+  final releaseYear = 1970; // Default fallback
+
   return Scaffold(
     body: Stack(
       children: [
@@ -252,6 +255,7 @@ Widget buildPartyView(BuildContext context, WatchPartyScreenState state) {
               MainVideoPlayer(
                 videoPath: state.videoPath,
                 title: state.title,
+                releaseYear: releaseYear, // Use fallback releaseYear
                 isHls: state.isHls,
                 subtitleUrl: state.subtitleUrl,
               ),
