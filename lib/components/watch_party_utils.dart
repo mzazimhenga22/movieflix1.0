@@ -22,9 +22,14 @@ Future<void> fetchStreamingLinks(
   try {
     final tmdbId = movie['id']?.toString() ?? '';
     final title = movie['title'] ?? state.title;
+    final releaseDate = movie['release_date'] as String? ??
+        movie['first_air_date'] as String? ??
+        '1970-01-01';
+    final releaseYear = int.parse(releaseDate.split('-')[0]);
     final streamingInfo = await StreamingService.getStreamingLink(
       tmdbId: tmdbId,
       title: title,
+      releaseYear: releaseYear,
       resolution: '720p',
       enableSubtitles: false,
     );
@@ -170,3 +175,4 @@ void showTriviaDialog(BuildContext context, WatchPartyScreenState state) {
     ),
   );
 }
+
