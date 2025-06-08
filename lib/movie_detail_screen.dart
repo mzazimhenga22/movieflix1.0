@@ -35,6 +35,7 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
   bool _enableSubtitles = false;
   late final bool _isTvShow;
   List<Map<String, dynamic>> _similarMovies = [];
+  int? _releaseYear;
 
   @override
   void initState() {
@@ -48,6 +49,28 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
       _tvDetailsFuture = tmdb.TMDBApi.fetchTVShowDetails(widget.movie['id']);
     }
     _fetchSimilarMovies();
+    _fetchReleaseYear();
+  }
+
+  Future<void> _fetchReleaseYear() async {
+    try {
+      final releaseDate = _isTvShow
+          ? widget.movie['first_air_date'] as String? ?? '1970-01-01'
+          : widget.movie['release_date'] as String? ?? '1970-01-01';
+      final year = int.parse(releaseDate.split('-')[0]);
+      if (mounted) {
+        setState(() {
+          _releaseYear = year;
+        });
+      }
+    } catch (e) {
+      debugPrint('Failed to parse release year: $e');
+      if (mounted) {
+        setState(() {
+          _releaseYear = 1970; // Fallback
+        });
+      }
+    }
   }
 
   Future<void> _fetchSimilarMovies() async {
@@ -141,6 +164,7 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
       streamingInfo = await StreamingService.getStreamingLink(
         tmdbId: tmdbId,
         title: title,
+        releaseYear: _releaseYear ?? 1970,
         resolution: resolution,
         enableSubtitles: subtitles,
       );
@@ -272,6 +296,7 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
             title: details['name']?.toString() ??
                 details['title']?.toString() ??
                 'Unknown Show',
+            releaseYear: _releaseYear ?? 1970,
             season: seasonNumber,
             episode: episodeNumber,
             resolution: resolution,
@@ -282,12 +307,12 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
           throw Exception('No seasons available');
         }
       } else {
-        debugPrint('Fetching streaming info for movie');
         streamingInfo = await StreamingService.getStreamingLink(
           tmdbId: details['id']?.toString() ?? 'Unknown Movie',
           title: details['title']?.toString() ??
               details['name']?.toString() ??
               'Unknown Movie',
+          releaseYear: _releaseYear ?? 1970,
           resolution: resolution,
           enableSubtitles: subtitles,
         );
@@ -335,11 +360,12 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
                 details['title'] ??
                 details['name'] ??
                 'Untitled',
+            releaseYear: _releaseYear ?? 1970,
             isFullSeason: isTvShow,
             episodeFiles: episodeFiles,
             similarMovies: _similarMovies,
-            subtitleUrl: subtitleUrl, // Pass subtitle URL
-            isHls: urlType == 'm3u8', // Indicate HLS format
+            subtitleUrl: subtitleUrl,
+            isHls: urlType == 'm3u8',
           ),
         ),
       );
@@ -741,7 +767,7 @@ class _BackgroundDecoration extends StatelessWidget {
   const _BackgroundDecoration({required this.accentColor});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(context) {
     return Container(
       decoration: const BoxDecoration(color: Color(0xff0d121d)),
       child: Stack(
@@ -1214,6 +1240,7 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
   late int _selectedSeasonNumber;
   bool _isLoading = false;
   bool _isVisible = false;
+  int? _releaseYear;
 
   @override
   void initState() {
@@ -1223,6 +1250,27 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
     _selectedSeasonNumber = widget.seasons.isNotEmpty
         ? (widget.seasons.first['season_number'] as int? ?? 1)
         : 1;
+    _fetchTVShowDetails();
+  }
+
+  Future<void> _fetchTVShowDetails() async {
+    try {
+      final tvDetails = await tmdb.TMDBApi.fetchTVShowDetails(widget.tvId);
+      final firstAirDate =
+          tvDetails['first_air_date'] as String? ?? '1970-01-01';
+      if (mounted) {
+        setState(() {
+          _releaseYear = int.parse(firstAirDate.split('-')[0]);
+        });
+      }
+    } catch (e) {
+      debugPrint('Failed to fetch TV show details: $e');
+      if (mounted) {
+        setState(() {
+          _releaseYear = 1970; // Fallback
+        });
+      }
+    }
   }
 
   @override
@@ -1296,6 +1344,7 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
                 title: widget.tvShowName.isNotEmpty
                     ? widget.tvShowName
                     : episodeName,
+                releaseYear: _releaseYear ?? 1970,
                 season: seasonNumber,
                 episode: episodeNumber,
                 resolution: resolution,
@@ -1345,6 +1394,7 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
                   builder: (context) => MainVideoPlayer(
                     videoPath: streamUrl,
                     title: streamingInfo['title'] ?? episodeName,
+                    releaseYear: _releaseYear ?? 1970,
                     isFullSeason: true,
                     episodeFiles: [],
                     similarMovies: [],
