@@ -20,6 +20,7 @@ class Subtitle {
 class MainVideoPlayer extends StatefulWidget {
   final String videoPath;
   final String title;
+  final int releaseYear;
   final bool isFullSeason;
   final List<String> episodeFiles;
   final List<Map<String, dynamic>> similarMovies;
@@ -32,6 +33,7 @@ class MainVideoPlayer extends StatefulWidget {
     super.key,
     required this.videoPath,
     required this.title,
+    required this.releaseYear,
     this.isFullSeason = false,
     this.episodeFiles = const [],
     this.similarMovies = const [],
@@ -458,6 +460,7 @@ class MainVideoPlayerState extends State<MainVideoPlayer>
       final streamingInfo = await StreamingService.getStreamingLink(
         tmdbId: widget.title.hashCode.toString(),
         title: widget.title,
+        releaseYear: widget.releaseYear,
         resolution: quality,
         enableSubtitles: _showSubtitles,
       );
@@ -643,11 +646,16 @@ class MainVideoPlayerState extends State<MainVideoPlayer>
     if (widget.similarMovies.isEmpty) return;
     final recommendation = widget.similarMovies.first;
     try {
+      final releaseDate = recommendation['release_date'] as String? ??
+          recommendation['first_air_date'] as String? ??
+          '1970-01-01';
+      final releaseYear = int.parse(releaseDate.split('-')[0]);
       final streamingInfo = await StreamingService.getStreamingLink(
         tmdbId: recommendation['id'].toString(),
         title: recommendation['title']?.toString() ??
             recommendation['name']?.toString() ??
             'Untitled',
+        releaseYear: releaseYear, // Extracted releaseYear
         resolution: _selectedQuality,
         enableSubtitles: _showSubtitles,
       );
@@ -715,6 +723,7 @@ class MainVideoPlayerState extends State<MainVideoPlayer>
     final newWidget = MainVideoPlayer(
       videoPath: videoPath,
       title: title,
+      releaseYear: widget.releaseYear, // Use current widget's releaseYear
       isFullSeason: widget.isFullSeason,
       episodeFiles: widget.episodeFiles,
       similarMovies: widget.similarMovies,
