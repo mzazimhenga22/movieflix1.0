@@ -4,12 +4,14 @@ import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:provider/provider.dart';
 import 'database/auth_database.dart';
 import 'package:movie_app/home_screen_main.dart';
 import 'package:movie_app/signin_screen.dart';
 import 'user_manager.dart';
 import 'session_manager.dart';
 import 'dart:ui';
+import 'package:movie_app/settings_provider.dart';
 
 class AnimatedBorder extends StatefulWidget {
   const AnimatedBorder({
@@ -88,9 +90,11 @@ class AnimatedBorderBox extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final settings = Provider.of<SettingsProvider>(context);
+    final accentColor = settings.accentColor;
     final colors = (index % 2 == 0)
-        ? const [Colors.cyan, Colors.purple]
-        : const [Colors.purple, Colors.cyan];
+        ? [accentColor, Colors.purple]
+        : [Colors.purple, accentColor];
     return AnimatedBorder(
       colors: colors,
       child: child,
@@ -146,8 +150,7 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
 
   Future<void> _loadCurrentUserAndProfiles() async {
     try {
-      await AuthDatabase.instance
-          .initialize(); // Ensure database is initialized
+      await AuthDatabase.instance.initialize();
       final user = _auth.currentUser;
       if (user == null) {
         debugPrint('ℹ️ No user signed in');
@@ -286,25 +289,27 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
         context: context,
         builder: (context) => AlertDialog(
           title: const Text("Add Profile"),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: nameController,
-                decoration: const InputDecoration(labelText: "Name"),
-              ),
-              TextField(
-                controller: avatarController,
-                decoration:
-                    const InputDecoration(labelText: "Avatar URL (optional)"),
-              ),
-              TextField(
-                controller: pinController,
-                decoration: const InputDecoration(labelText: "PIN (optional)"),
-                keyboardType: TextInputType.number,
-                obscureText: true,
-              ),
-            ],
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nameController,
+                  decoration: const InputDecoration(labelText: "Name"),
+                ),
+                TextField(
+                  controller: avatarController,
+                  decoration:
+                      const InputDecoration(labelText: "Avatar URL (optional)"),
+                ),
+                TextField(
+                  controller: pinController,
+                  decoration: const InputDecoration(labelText: "PIN (optional)"),
+                  keyboardType: TextInputType.number,
+                  obscureText: true,
+                ),
+              ],
+            ),
           ),
           actions: [
             TextButton(
@@ -390,9 +395,11 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
         context: context,
         builder: (context) => AlertDialog(
           title: const Text("Update Avatar URL"),
-          content: TextField(
-            controller: avatarController,
-            decoration: const InputDecoration(labelText: "New Avatar URL"),
+          content: SingleChildScrollView(
+            child: TextField(
+              controller: avatarController,
+              decoration: const InputDecoration(labelText: "New Avatar URL"),
+            ),
           ),
           actions: [
             TextButton(
@@ -433,8 +440,8 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
               },
             ),
           ],
-        ),
-      );
+          ),
+        );
     }
   }
 
@@ -495,11 +502,13 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
         context: context,
         builder: (context) => AlertDialog(
           title: const Text("Enter PIN"),
-          content: TextField(
-            controller: pinController,
-            decoration: const InputDecoration(labelText: "PIN"),
-            keyboardType: TextInputType.number,
-            obscureText: true,
+          content: SingleChildScrollView(
+            child: TextField(
+              controller: pinController,
+              decoration: const InputDecoration(labelText: "PIN"),
+              keyboardType: TextInputType.number,
+              obscureText: true,
+            ),
           ),
           actions: [
             TextButton(
@@ -566,10 +575,12 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
     return GestureDetector(
       onTap: _showAddProfileDialog,
       child: Container(
-        decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.white.withOpacity(0.2)),
+        decoration: const BoxDecoration(
+          color: Color.fromRGBO(255, 255, 255, 0.1),
+          borderRadius: BorderRadius.all(Radius.circular(12)),
+          border: Border.fromBorderSide(
+            BorderSide(color: Color.fromRGBO(255, 255, 255, 0.2)),
+          ),
         ),
         child: const Center(
           child: Icon(Icons.add, color: Colors.white, size: 40),
@@ -596,9 +607,9 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
       child: AnimatedBorderBox(
         index: index,
         child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            boxShadow: const [
+          decoration: const BoxDecoration(
+            borderRadius: BorderRadius.all(Radius.circular(12)),
+            boxShadow: [
               BoxShadow(
                 color: Colors.black26,
                 blurRadius: 10,
@@ -607,14 +618,16 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
             ],
           ),
           child: ClipRRect(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: const BorderRadius.all(Radius.circular(12)),
             child: BackdropFilter(
               filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
               child: Container(
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.white.withOpacity(0.2)),
+                decoration: const BoxDecoration(
+                  color: Color.fromRGBO(255, 255, 255, 0.1),
+                  borderRadius: BorderRadius.all(Radius.circular(12)),
+                  border: Border.fromBorderSide(
+                    BorderSide(color: Color.fromRGBO(255, 255, 255, 0.2)),
+                  ),
                 ),
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -675,6 +688,7 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final settings = Provider.of<SettingsProvider>(context);
     return Scaffold(
       body: Container(
         decoration: const BoxDecoration(
@@ -762,7 +776,7 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
             isEditing = !isEditing;
           });
         },
-        backgroundColor: Colors.cyan,
+        backgroundColor: settings.accentColor,
         child: Icon(isEditing ? Icons.check : Icons.edit),
       ),
     );
