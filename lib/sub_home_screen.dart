@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:movie_app/settings_provider.dart';
@@ -6,20 +7,25 @@ import 'package:movie_app/movie_detail_screen.dart';
 import 'package:movie_app/components/movie_card.dart';
 import 'recommended_movies_screen.dart';
 
-/// SubHomeScreen widget: Handles trending and recommended movies sections
+/// SubHomeScreen widget: Optimized with keep-alive and debounced scrolling
 class SubHomeScreen extends StatefulWidget {
-  const SubHomeScreen({Key? key}) : super(key: key);
+  const SubHomeScreen({super.key});
 
   @override
   SubHomeScreenState createState() => SubHomeScreenState();
 }
 
-class SubHomeScreenState extends State<SubHomeScreen> {
+class SubHomeScreenState extends State<SubHomeScreen>
+    with AutomaticKeepAliveClientMixin {
   final trendingController = ScrollController();
   List<dynamic> trendingMovies = [];
   List<dynamic> recommendedMovies = [];
   bool isLoadingTrending = false;
   bool isLoadingRecommended = false;
+  Timer? _debounceTimer;
+
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
@@ -29,8 +35,10 @@ class SubHomeScreenState extends State<SubHomeScreen> {
   }
 
   Future<void> fetchInitialData() async {
-    await fetchTrendingMovies();
-    await fetchRecommendedMovies(page: 1);
+    await Future.wait([
+      fetchTrendingMovies(),
+      fetchRecommendedMovies(page: 1),
+    ]);
   }
 
   Future<void> fetchTrendingMovies() async {
@@ -54,9 +62,12 @@ class SubHomeScreenState extends State<SubHomeScreen> {
   }
 
   void onScrollTrending() {
-    if (trendingController.position.extentAfter < 200 && !isLoadingTrending) {
-      fetchTrendingMovies();
-    }
+    if (_debounceTimer?.isActive ?? false) _debounceTimer!.cancel();
+    _debounceTimer = Timer(const Duration(milliseconds: 250), () {
+      if (trendingController.position.extentAfter < 200 && !isLoadingTrending) {
+        fetchTrendingMovies();
+      }
+    });
   }
 
   Future<void> refreshData() async {
@@ -72,16 +83,16 @@ class SubHomeScreenState extends State<SubHomeScreen> {
       width: 120,
       margin: const EdgeInsets.all(8.0),
       decoration: BoxDecoration(
-        color: Colors.grey[800],
-        borderRadius: BorderRadius.circular(12),
+        color: Colors.grey[800]!,
+        borderRadius: const BorderRadius.all(Radius.circular(12)),
       ),
       child: Column(
         children: [
           Expanded(
             child: Container(
               decoration: BoxDecoration(
-                color: Colors.grey[900],
-                borderRadius: BorderRadius.circular(12),
+                color: Colors.grey[900]!,
+                borderRadius: const BorderRadius.all(Radius.circular(12)),
               ),
             ),
           ),
@@ -92,13 +103,13 @@ class SubHomeScreenState extends State<SubHomeScreen> {
                 Container(
                   width: 80,
                   height: 10,
-                  color: Colors.grey[900],
+                  color: Colors.grey[900]!,
                 ),
                 const SizedBox(height: 4),
                 Container(
                   width: 40,
                   height: 10,
-                  color: Colors.grey[900],
+                  color: Colors.grey[900]!,
                 ),
               ],
             ),
@@ -124,6 +135,7 @@ class SubHomeScreenState extends State<SubHomeScreen> {
       child: ListView.builder(
         controller: trendingController,
         scrollDirection: Axis.horizontal,
+        itemExtent: 136,
         itemCount: trendingMovies.length + (isLoadingTrending ? 1 : 0),
         itemBuilder: (context, index) {
           if (index == trendingMovies.length) {
@@ -135,20 +147,22 @@ class SubHomeScreenState extends State<SubHomeScreen> {
           final posterUrl = posterPath != null
               ? 'https://image.tmdb.org/t/p/w342$posterPath'
               : '';
-          return MovieCard(
-            imageUrl: posterUrl,
-            title: movie['title'] ?? movie['name'] ?? 'No Title',
-            rating: movie['vote_average'] != null
-                ? double.tryParse(movie['vote_average'].toString())
-                : null,
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => MovieDetailScreen(movie: movie),
-                ),
-              );
-            },
+          return RepaintBoundary(
+            child: MovieCard(
+              imageUrl: posterUrl,
+              title: movie['title'] ?? movie['name'] ?? 'No Title',
+              rating: movie['vote_average'] != null
+                  ? double.tryParse(movie['vote_average'].toString())
+                  : null,
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => MovieDetailScreen(movie: movie),
+                  ),
+                );
+              },
+            ),
           );
         },
       ),
@@ -192,31 +206,31 @@ class SubHomeScreenState extends State<SubHomeScreen> {
             final posterUrl = posterPath != null
                 ? 'https://image.tmdb.org/t/p/w342$posterPath'
                 : '';
-            return MovieCard(
-              imageUrl: posterUrl,
-              title: movie['title'] ?? movie['name'] ?? 'No Title',
-              rating: movie['vote_average'] != null
-                  ? double.tryParse(movie['vote_average'].toString())
-                  : null,
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => MovieDetailScreen(movie: movie),
-                  ),
-                );
-              },
+            return RepaintBoundary(
+              child: MovieCard(
+                imageUrl: posterUrl,
+                title: movie['title'] ?? movie['name'] ?? 'No Title',
+                rating: movie['vote_average'] != null
+                    ? double.tryParse(movie['vote_average'].toString())
+                    : null,
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => MovieDetailScreen(movie: movie),
+                    ),
+                  );
+                },
+              ),
             );
           },
         ),
         TextButton(
           onPressed: () {
             Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => const RecommendedMoviesScreen(),
-              ),
-            );
+                context,
+                MaterialPageRoute(
+                    builder: (context) => const RecommendedMoviesScreen()));
           },
           child: const Text('See All'),
         ),
@@ -226,6 +240,7 @@ class SubHomeScreenState extends State<SubHomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     return Consumer<SettingsProvider>(
       builder: (context, settings, child) {
         return Column(
@@ -267,6 +282,8 @@ class SubHomeScreenState extends State<SubHomeScreen> {
   @override
   void dispose() {
     trendingController.dispose();
+    _debounceTimer?.cancel();
     super.dispose();
   }
 }
+
