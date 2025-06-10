@@ -19,25 +19,27 @@ import 'package:youtube_player_flutter/youtube_player_flutter.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:shimmer/shimmer.dart';
 
-/// AnimatedBackground widget: Static gradient background for reduced GPU usage
+/// AnimatedBackground widget: Static gradient background with const and RepaintBoundary
 class AnimatedBackground extends StatelessWidget {
   const AnimatedBackground({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Colors.redAccent, Colors.blueAccent],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+    return RepaintBoundary(
+      child: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Colors.redAccent, Colors.blueAccent],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
         ),
       ),
     );
   }
 }
 
-/// RandomMovieScreen widget: Displays a random movie or TV show
+/// RandomMovieScreen widget: Displays a random movie or TV show with batched network calls
 class RandomMovieScreen extends StatefulWidget {
   const RandomMovieScreen({super.key});
 
@@ -58,8 +60,12 @@ class RandomMovieScreenState extends State<RandomMovieScreen> {
   Future<void> fetchRandomMovie() async {
     setState(() => isLoading = true);
     try {
-      final movies = await tmdb.TMDBApi.fetchTrendingMovies();
-      final tvShows = await tmdb.TMDBApi.fetchTrendingTVShows();
+      final results = await Future.wait([
+        tmdb.TMDBApi.fetchTrendingMovies(),
+        tmdb.TMDBApi.fetchTrendingTVShows(),
+      ]);
+      final movies = results[0];
+      final tvShows = results[1];
       List<Map<String, dynamic>> allContent = [];
       allContent.addAll(movies.cast<Map<String, dynamic>>());
       allContent.addAll(tvShows.cast<Map<String, dynamic>>());
@@ -84,7 +90,7 @@ class RandomMovieScreenState extends State<RandomMovieScreen> {
               baseColor: Colors.grey[800]!,
               highlightColor: Colors.grey[600]!,
               child: Container(
-                color: Colors.grey[800],
+                color: Colors.grey[800]!,
                 child: const Center(
                   child: Text(
                     'Loading Random Movie...',
@@ -100,7 +106,7 @@ class RandomMovieScreenState extends State<RandomMovieScreen> {
   }
 }
 
-/// FeaturedMovieCard widget: Optimized with user-initiated video playback and image caching
+/// FeaturedMovieCard widget: Optimized with lazy-loaded video and caching
 class FeaturedMovieCard extends StatefulWidget {
   final String imageUrl;
   final String title;
@@ -133,7 +139,7 @@ class FeaturedMovieCardState extends State<FeaturedMovieCard> {
   YoutubePlayerController? videoController;
   double _buttonScale = 1.0;
 
-  final Map<int, String> genreMap = {
+  final Map<int, String> genreMap = const {
     28: "Action",
     12: "Adventure",
     16: "Animation",
@@ -156,7 +162,7 @@ class FeaturedMovieCardState extends State<FeaturedMovieCard> {
 
   @override
   Widget build(BuildContext context) {
-    final settings = Provider.of<SettingsProvider>(context);
+    final settings = Provider.of<SettingsProvider>(context, listen: false);
     return GestureDetector(
       onTap: widget.onTap,
       child: Padding(
@@ -164,7 +170,7 @@ class FeaturedMovieCardState extends State<FeaturedMovieCard> {
         child: Stack(
           children: [
             ClipRRect(
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: const BorderRadius.all(Radius.circular(16)),
               child: AnimatedSwitcher(
                 duration: const Duration(milliseconds: 500),
                 child: showVideo && videoController != null
@@ -185,16 +191,13 @@ class FeaturedMovieCardState extends State<FeaturedMovieCard> {
                             baseColor: Colors.grey[800]!,
                             highlightColor: Colors.grey[600]!,
                             child: Container(
-                              height: 320,
-                              color: Colors.grey[800],
-                            ),
+                                height: 320, color: Colors.grey[800]!),
                           ),
                           errorWidget: (context, url, error) => Container(
                             height: 320,
                             color: Colors.grey,
                             child: const Center(
-                              child: Icon(Icons.error, size: 50),
-                            ),
+                                child: Icon(Icons.error, size: 50)),
                           ),
                         ),
                       ),
@@ -203,14 +206,11 @@ class FeaturedMovieCardState extends State<FeaturedMovieCard> {
             Positioned.fill(
               child: Container(
                 decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: const BorderRadius.all(Radius.circular(16)),
                   gradient: LinearGradient(
                     begin: Alignment.bottomCenter,
                     end: Alignment.topCenter,
-                    colors: [
-                      Colors.black.withOpacity(0.8),
-                      Colors.transparent,
-                    ],
+                    colors: [Colors.black.withOpacity(0.8), Colors.transparent],
                   ),
                 ),
               ),
@@ -245,25 +245,18 @@ class FeaturedMovieCardState extends State<FeaturedMovieCard> {
                       Text(
                         'Release Date: ${widget.releaseDate}',
                         style: const TextStyle(
-                          color: Colors.white70,
-                          fontSize: 16,
-                        ),
+                            color: Colors.white70, fontSize: 16),
                       ),
                       const Spacer(),
                       Row(
                         children: [
-                          const Icon(
-                            Icons.star,
-                            color: Colors.yellow,
-                            size: 18,
-                          ),
+                          const Icon(Icons.star,
+                              color: Colors.yellow, size: 18),
                           const SizedBox(width: 4),
                           Text(
                             widget.rating.toStringAsFixed(1),
                             style: const TextStyle(
-                              color: Colors.white70,
-                              fontSize: 16,
-                            ),
+                                color: Colors.white70, fontSize: 16),
                           ),
                         ],
                       ),
@@ -272,10 +265,7 @@ class FeaturedMovieCardState extends State<FeaturedMovieCard> {
                   const SizedBox(height: 6),
                   Text(
                     'Genres: ${getGenresText()}',
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 14,
-                    ),
+                    style: const TextStyle(color: Colors.white70, fontSize: 14),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -291,35 +281,38 @@ class FeaturedMovieCardState extends State<FeaturedMovieCard> {
                           duration: const Duration(milliseconds: 100),
                           child: ElevatedButton.icon(
                             onPressed: () {
-                              if (videoController == null &&
-                                  widget.trailerUrl.isNotEmpty) {
+                              if (!showVideo && widget.trailerUrl.isNotEmpty) {
                                 final videoId = YoutubePlayer.convertUrlToId(
                                     widget.trailerUrl);
                                 if (videoId != null) {
-                                  videoController = YoutubePlayerController(
-                                    initialVideoId: videoId,
-                                    flags: const YoutubePlayerFlags(
-                                      autoPlay: true,
-                                      mute: false,
-                                      hideControls: true,
-                                    ),
+                                  setState(() {
+                                    videoController = YoutubePlayerController(
+                                      initialVideoId: videoId,
+                                      flags: const YoutubePlayerFlags(
+                                        autoPlay: true,
+                                        mute: false,
+                                        hideControls: true,
+                                      ),
+                                    );
+                                    showVideo = true;
+                                  });
+                                } else {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                        content: Text('Invalid trailer URL')),
                                   );
                                 }
                               }
-                              setState(() => showVideo = true);
                             },
-                            icon: const Icon(
-                              Icons.play_arrow,
-                              color: Colors.black,
-                            ),
-                            label: const Text(
-                              'Watch Trailer',
-                              style: TextStyle(color: Colors.black),
-                            ),
+                            icon: const Icon(Icons.play_arrow,
+                                color: Colors.black),
+                            label: const Text('Watch Trailer',
+                                style: TextStyle(color: Colors.black)),
                             style: ElevatedButton.styleFrom(
                               backgroundColor: Colors.white,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
+                              shape: const RoundedRectangleBorder(
+                                borderRadius:
+                                    BorderRadius.all(Radius.circular(8)),
                               ),
                             ),
                           ),
@@ -327,11 +320,7 @@ class FeaturedMovieCardState extends State<FeaturedMovieCard> {
                       ),
                       const SizedBox(width: 12),
                       GestureDetector(
-                        onTap: () {
-                          setState(() {
-                            isFavorite = !isFavorite;
-                          });
-                        },
+                        onTap: () => setState(() => isFavorite = !isFavorite),
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 300),
                           padding: const EdgeInsets.all(10),
@@ -354,7 +343,7 @@ class FeaturedMovieCardState extends State<FeaturedMovieCard> {
                 ],
               ),
             ),
-            if (showVideo)
+            if (showVideo && videoController != null)
               Positioned(
                 top: 10,
                 right: 10,
@@ -375,7 +364,8 @@ class FeaturedMovieCardState extends State<FeaturedMovieCard> {
   }
 }
 
-/// FeaturedSlider widget: Manages a vertical carousel of featured content
+/// FeaturedSlider widget: Optimized with debounced scrolling and safe casts
+/// FeaturedSlider widget: Optimized with debounced scrolling and safe casts
 class FeaturedSlider extends StatefulWidget {
   const FeaturedSlider({super.key});
 
@@ -390,6 +380,7 @@ class FeaturedSliderState extends State<FeaturedSlider> {
   int pageCount = 0;
   bool isLoading = false;
   Timer? timer;
+  Timer? _debounceTimer;
   static List<Map<String, dynamic>> _cachedContent = [];
 
   @override
@@ -426,13 +417,21 @@ class FeaturedSliderState extends State<FeaturedSlider> {
   Future<List<Map<String, dynamic>>> fetchFeaturedContent(
       {int limit = 5}) async {
     try {
-      final List<dynamic> movies = await tmdb.TMDBApi.fetchFeaturedMovies();
-      final List<dynamic> tvShows = await tmdb.TMDBApi.fetchFeaturedTVShows();
+      final results = await Future.wait([
+        tmdb.TMDBApi.fetchFeaturedMovies(),
+        tmdb.TMDBApi.fetchFeaturedTVShows(),
+      ]);
+      final movies = results[0];
+      final tvShows = results[1];
       List<Map<String, dynamic>> content = [];
       content.addAll(movies.cast<Map<String, dynamic>>());
       content.addAll(tvShows.cast<Map<String, dynamic>>());
-      content.sort(
-          (a, b) => (b['popularity'] as num).compareTo(a['popularity'] as num));
+      // Safely sort by popularity, defaulting missing values to 0
+      content.sort((a, b) {
+        final num aPop = (a['popularity'] as num?) ?? 0;
+        final num bPop = (b['popularity'] as num?) ?? 0;
+        return bPop.compareTo(aPop);
+      });
       return content.take(limit).toList();
     } catch (e) {
       debugPrint("Error fetching featured content: $e");
@@ -443,7 +442,9 @@ class FeaturedSliderState extends State<FeaturedSlider> {
   void startTimer() {
     timer?.cancel();
     timer = Timer.periodic(const Duration(seconds: 20), (timer) {
-      if (pageController.hasClients && pageCount > 0) {
+      if (pageController.hasClients &&
+          pageCount > 0 &&
+          !pageController.position.isScrollingNotifier.value) {
         currentPage++;
         if (currentPage >= pageCount) {
           currentPage = 0;
@@ -462,8 +463,8 @@ class FeaturedSliderState extends State<FeaturedSlider> {
   void onScroll() {
     if (pageController.position.isScrollingNotifier.value) {
       timer?.cancel();
-    } else {
-      startTimer();
+    } else if (_debounceTimer == null || !_debounceTimer!.isActive) {
+      _debounceTimer = Timer(const Duration(milliseconds: 250), startTimer);
     }
   }
 
@@ -479,6 +480,7 @@ class FeaturedSliderState extends State<FeaturedSlider> {
     });
   }
 
+  /// Placeholder while loading featured items
   Widget buildFeaturedPlaceholder() {
     return Shimmer.fromColors(
       baseColor: Colors.grey[800]!,
@@ -488,95 +490,23 @@ class FeaturedSliderState extends State<FeaturedSlider> {
         child: Stack(
           children: [
             ClipRRect(
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: const BorderRadius.all(Radius.circular(16)),
               child: Container(
                 height: 320,
                 width: double.infinity,
-                color: Colors.grey[800],
+                color: Colors.grey[800]!,
               ),
             ),
             Positioned.fill(
               child: Container(
-                decoration: const BoxDecoration(
-                  borderRadius: BorderRadius.all(Radius.circular(16)),
+                decoration: BoxDecoration(
+                  borderRadius: const BorderRadius.all(Radius.circular(16)),
                   gradient: LinearGradient(
                     begin: Alignment.bottomCenter,
                     end: Alignment.topCenter,
-                    colors: [
-                      Color.fromRGBO(0, 0, 0, 0.8),
-                      Colors.transparent,
-                    ],
+                    colors: [Colors.black.withOpacity(0.8), Colors.transparent],
                   ),
                 ),
-              ),
-            ),
-            Positioned(
-              bottom: 20,
-              left: 20,
-              right: 20,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    width: 200,
-                    height: 24,
-                    color: Colors.grey[800],
-                  ),
-                  const SizedBox(height: 6),
-                  Row(
-                    children: [
-                      Container(
-                        width: 150,
-                        height: 16,
-                        color: Colors.grey[800],
-                      ),
-                      const Spacer(),
-                      Row(
-                        children: [
-                          Container(
-                            width: 18,
-                            height: 18,
-                            color: Colors.grey[800],
-                          ),
-                          const SizedBox(width: 4),
-                          Container(
-                            width: 30,
-                            height: 16,
-                            color: Colors.grey[800],
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  Container(
-                    width: 100,
-                    height: 14,
-                    color: Colors.grey[800],
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Container(
-                        width: 120,
-                        height: 36,
-                        decoration: const BoxDecoration(
-                          color: Colors.grey,
-                          borderRadius: BorderRadius.all(Radius.circular(8)),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Container(
-                        width: 40,
-                        height: 40,
-                        decoration: const BoxDecoration(
-                          color: Colors.grey,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
               ),
             ),
           ],
@@ -591,12 +521,14 @@ class FeaturedSliderState extends State<FeaturedSlider> {
       pageController.position.isScrollingNotifier.removeListener(onScroll);
     }
     timer?.cancel();
+    _debounceTimer?.cancel();
     pageController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    const String defaultImageUrl = 'https://via.placeholder.com/500x320';
     return SizedBox(
       height: 320,
       child: featuredContent.isEmpty
@@ -613,19 +545,46 @@ class FeaturedSliderState extends State<FeaturedSlider> {
               },
               itemBuilder: (context, index) {
                 final item = featuredContent[index];
-                final imageUrl =
-                    'https://image.tmdb.org/t/p/w500${item['backdrop_path'] ?? item['poster_path'] ?? ''}';
-                final title = item['title'] ?? item['name'] ?? 'Featured';
-                final releaseDate =
-                    item['release_date'] ?? item['first_air_date'] ?? 'Unknown';
-                final genres = item['genre_ids'] != null
-                    ? List<int>.from(item['genre_ids'])
-                    : <int>[];
-                final rating = item['vote_average'] != null
+
+                // Safe String casts with defaults
+                final String title =
+                    (item['title'] as String?)?.trim().isNotEmpty == true
+                        ? item['title'] as String
+                        : (item['name'] as String?)?.trim().isNotEmpty == true
+                            ? item['name'] as String
+                            : 'Featured';
+
+                final String releaseDate =
+                    (item['release_date'] as String?)?.trim().isNotEmpty == true
+                        ? item['release_date'] as String
+                        : (item['first_air_date'] as String?)
+                                    ?.trim()
+                                    .isNotEmpty ==
+                                true
+                            ? item['first_air_date'] as String
+                            : 'Unknown';
+
+                final String trailerUrl =
+                    (item['trailer_url'] as String?)?.trim().isNotEmpty == true
+                        ? item['trailer_url'] as String
+                        : 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+
+                final String? backdropPath = item['backdrop_path'] as String?;
+                final String? posterPath = item['poster_path'] as String?;
+                final String imageUrl = (backdropPath?.isNotEmpty == true)
+                    ? 'https://image.tmdb.org/t/p/w500$backdropPath'
+                    : (posterPath?.isNotEmpty == true)
+                        ? 'https://image.tmdb.org/t/p/w500$posterPath'
+                        : defaultImageUrl;
+
+                final List<int> genres = (item['genre_ids'] as List<dynamic>?)
+                        ?.map((e) => e as int)
+                        .toList() ??
+                    <int>[];
+                final double rating = (item['vote_average'] != null)
                     ? double.tryParse(item['vote_average'].toString()) ?? 0.0
                     : 0.0;
-                final trailerUrl = item['trailer_url'] ??
-                    'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+
                 return FeaturedMovieCard(
                   key: ValueKey(imageUrl),
                   imageUrl: imageUrl,
@@ -650,7 +609,7 @@ class FeaturedSliderState extends State<FeaturedSlider> {
   }
 }
 
-/// HomeScreenMain widget: Main screen with optimized structure
+/// HomeScreenMain widget: Optimized structure with extracted widgets
 class HomeScreenMain extends StatefulWidget {
   final String? profileName;
   const HomeScreenMain({super.key, this.profileName});
@@ -739,69 +698,48 @@ class HomeScreenMainState extends State<HomeScreenMain>
                 ),
               ),
             ),
-            actions: [
-              IconButton(
-                icon: Icon(Icons.search, color: accentColor),
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (context) => const SearchScreen()),
-                  );
-                },
-              ),
-              IconButton(
-                icon: Icon(Icons.list, color: accentColor),
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (context) => const MyListScreen()),
-                  );
-                },
-              ),
-              IconButton(
-                icon: Icon(Icons.person, color: accentColor),
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (context) => const ProfileScreen()),
-                  );
-                },
-              ),
+            actions: const [
+              _AppBarActions(),
             ],
           ),
           body: RepaintBoundary(
             child: Stack(
               children: [
-                const AnimatedBackground(),
                 Positioned.fill(
-                  child: Container(
-                    decoration: BoxDecoration(
-                      gradient: RadialGradient(
-                        center: const Alignment(-0.06, -0.34),
-                        radius: 1.0,
-                        colors: [
-                          accentColor.withOpacity(0.5),
-                          const Color.fromARGB(255, 0, 0, 0),
-                        ],
-                        stops: const [0.0, 0.59],
+                  child: RepaintBoundary(
+                    child: const AnimatedBackground(),
+                  ),
+                ),
+                Positioned.fill(
+                  child: RepaintBoundary(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        gradient: RadialGradient(
+                          center: const Alignment(-0.06, -0.34),
+                          radius: 1.0,
+                          colors: [
+                            accentColor.withOpacity(0.5),
+                            const Color.fromARGB(255, 0, 0, 0),
+                          ],
+                          stops: const [0.0, 0.59],
+                        ),
                       ),
                     ),
                   ),
                 ),
                 Positioned.fill(
-                  child: Container(
-                    decoration: BoxDecoration(
-                      gradient: RadialGradient(
-                        center: const Alignment(0.64, 0.3),
-                        radius: 1.0,
-                        colors: [
-                          accentColor.withOpacity(0.3),
-                          Colors.transparent,
-                        ],
-                        stops: const [0.0, 0.55],
+                  child: RepaintBoundary(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        gradient: RadialGradient(
+                          center: const Alignment(0.64, 0.3),
+                          radius: 1.0,
+                          colors: [
+                            accentColor.withOpacity(0.3),
+                            Colors.transparent,
+                          ],
+                          stops: const [0.0, 0.55],
+                        ),
                       ),
                     ),
                   ),
@@ -830,7 +768,8 @@ class HomeScreenMainState extends State<HomeScreenMain>
                         ],
                       ),
                       child: ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius:
+                            const BorderRadius.all(Radius.circular(12)),
                         child: BackdropFilter(
                           filter: ImageFilter.blur(sigmaX: 10.0, sigmaY: 10.0),
                           child: Container(
@@ -872,109 +811,10 @@ class HomeScreenMainState extends State<HomeScreenMain>
                                           const SizedBox(height: 10),
                                           const FeaturedSlider(),
                                           const SizedBox(height: 20),
-                                          Padding(
-                                            padding: const EdgeInsets.symmetric(
-                                                horizontal: 16.0),
-                                            child: Material(
-                                              color: Colors.transparent,
-                                              child: GestureDetector(
-                                                onTap: () {
-                                                  Navigator.push(
-                                                    context,
-                                                    MaterialPageRoute(
-                                                        builder: (context) =>
-                                                            const SongOfMoviesScreen()),
-                                                  );
-                                                },
-                                                child: Container(
-                                                  height: 180,
-                                                  decoration: BoxDecoration(
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                            24),
-                                                    gradient: LinearGradient(
-                                                      colors: [
-                                                        accentColor
-                                                            .withOpacity(0.2),
-                                                        accentColor
-                                                            .withOpacity(0.2),
-                                                      ],
-                                                      begin: Alignment.topLeft,
-                                                      end:
-                                                          Alignment.bottomRight,
-                                                    ),
-                                                    boxShadow: [
-                                                      BoxShadow(
-                                                        color: accentColor
-                                                            .withOpacity(0.6),
-                                                        blurRadius: 12,
-                                                        offset:
-                                                            const Offset(0, 6),
-                                                      ),
-                                                    ],
-                                                  ),
-                                                  child: Stack(
-                                                    alignment: Alignment.center,
-                                                    children: [
-                                                      Icon(
-                                                        Icons.music_note,
-                                                        color: Colors.white
-                                                            .withOpacity(0.3),
-                                                        size: 120,
-                                                      ),
-                                                      Container(
-                                                        decoration:
-                                                            const BoxDecoration(
-                                                          borderRadius:
-                                                              BorderRadius.all(
-                                                                  Radius
-                                                                      .circular(
-                                                                          24)),
-                                                          gradient:
-                                                              LinearGradient(
-                                                            colors: [
-                                                              Color.fromRGBO(
-                                                                  0, 0, 0, 0.2),
-                                                              Colors
-                                                                  .transparent,
-                                                            ],
-                                                            begin: Alignment
-                                                                .bottomCenter,
-                                                            end: Alignment
-                                                                .topCenter,
-                                                          ),
-                                                        ),
-                                                      ),
-                                                      const Positioned(
-                                                        bottom: 20,
-                                                        child: Text(
-                                                          'Song of Movies',
-                                                          style: TextStyle(
-                                                            color: Colors.white,
-                                                            fontSize: 32,
-                                                            fontWeight:
-                                                                FontWeight.bold,
-                                                            shadows: [
-                                                              Shadow(
-                                                                blurRadius: 4,
-                                                                color: Colors
-                                                                    .black54,
-                                                                offset: Offset(
-                                                                    2, 2),
-                                                              ),
-                                                            ],
-                                                          ),
-                                                        ),
-                                                      ),
-                                                    ],
-                                                  ),
-                                                ),
-                                              ),
-                                            ),
-                                          ),
+                                          const _SongOfMoviesCard(),
                                           const SizedBox(height: 20),
                                           const SizedBox(
-                                            height: 400,
+                                            height: 430,
                                             child: Opacity(
                                               opacity: 0.7,
                                               child: ReelsSection(),
@@ -1009,36 +849,10 @@ class HomeScreenMainState extends State<HomeScreenMain>
               );
             },
           ),
-          bottomNavigationBar: Container(
-            decoration: BoxDecoration(
-              color: const Color.fromARGB(160, 17, 19, 40),
-              border: Border(
-                top: BorderSide(
-                    color: Colors.white.withOpacity(0.125), width: 1.0),
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: accentColor.withOpacity(0.3),
-                  blurRadius: 8,
-                  spreadRadius: 2,
-                ),
-              ],
-            ),
-            child: ClipRRect(
-              borderRadius:
-                  const BorderRadius.vertical(top: Radius.circular(12)),
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 10.0, sigmaY: 10.0),
-                child: BottomNavigationBar(
-                  backgroundColor: Colors.transparent,
-                  selectedItemColor: Colors.white,
-                  unselectedItemColor: accentColor.withOpacity(0.6),
-                  currentIndex: selectedIndex,
-                  items: _navItems,
-                  onTap: onItemTapped,
-                ),
-              ),
-            ),
+          bottomNavigationBar: _BottomNavBar(
+            accentColor: accentColor,
+            selectedIndex: selectedIndex,
+            onItemTapped: onItemTapped,
           ),
         );
       },
@@ -1051,3 +865,173 @@ class HomeScreenMainState extends State<HomeScreenMain>
     super.dispose();
   }
 }
+
+/// Extracted AppBar actions to reduce rebuilds
+class _AppBarActions extends StatelessWidget {
+  const _AppBarActions();
+
+  @override
+  Widget build(BuildContext context) {
+    final accentColor =
+        Provider.of<SettingsProvider>(context, listen: false).accentColor;
+    return Row(
+      children: [
+        IconButton(
+          icon: Icon(Icons.search, color: accentColor),
+          onPressed: () {
+            Navigator.push(context,
+                MaterialPageRoute(builder: (context) => const SearchScreen()));
+          },
+        ),
+        IconButton(
+          icon: Icon(Icons.list, color: accentColor),
+          onPressed: () {
+            Navigator.push(context,
+                MaterialPageRoute(builder: (context) => const MyListScreen()));
+          },
+        ),
+        IconButton(
+          icon: Icon(Icons.person, color: accentColor),
+          onPressed: () {
+            Navigator.push(context,
+                MaterialPageRoute(builder: (context) => const ProfileScreen()));
+          },
+        ),
+      ],
+    );
+  }
+}
+
+/// Extracted Song of Movies card to minimize rebuilds
+class _SongOfMoviesCard extends StatelessWidget {
+  const _SongOfMoviesCard();
+
+  @override
+  Widget build(BuildContext context) {
+    final accentColor =
+        Provider.of<SettingsProvider>(context, listen: false).accentColor;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0),
+      child: Material(
+        color: Colors.transparent,
+        child: GestureDetector(
+          onTap: () {
+            Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (context) => const SongOfMoviesScreen()));
+          },
+          child: Container(
+            height: 180,
+            decoration: BoxDecoration(
+              borderRadius: const BorderRadius.all(Radius.circular(24)),
+              gradient: LinearGradient(
+                colors: [
+                  accentColor.withOpacity(0.2),
+                  accentColor.withOpacity(0.2),
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: accentColor.withOpacity(0.6),
+                  blurRadius: 12,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+            ),
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Icon(
+                  Icons.music_note,
+                  color: Colors.white.withOpacity(0.3),
+                  size: 120,
+                ),
+                Container(
+                  decoration: const BoxDecoration(
+                    borderRadius: BorderRadius.all(Radius.circular(24)),
+                    gradient: LinearGradient(
+                      colors: [
+                        Color.fromRGBO(0, 0, 0, 0.2),
+                        Colors.transparent,
+                      ],
+                      begin: Alignment.bottomCenter,
+                      end: Alignment.topCenter,
+                    ),
+                  ),
+                ),
+                const Positioned(
+                  bottom: 20,
+                  child: Text(
+                    'Song of Movies',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 32,
+                      fontWeight: FontWeight.bold,
+                      shadows: [
+                        Shadow(
+                          blurRadius: 4,
+                          color: Colors.black54,
+                          offset: Offset(2, 2),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Extracted BottomNavigationBar to reduce rebuilds
+class _BottomNavBar extends StatelessWidget {
+  final Color accentColor;
+  final int selectedIndex;
+  final ValueChanged<int> onItemTapped;
+
+  const _BottomNavBar({
+    required this.accentColor,
+    required this.selectedIndex,
+    required this.onItemTapped,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color.fromARGB(160, 17, 19, 40),
+        border: Border(
+          top: BorderSide(color: Colors.white.withOpacity(0.125), width: 1.0),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: accentColor.withOpacity(0.3),
+            blurRadius: 8,
+            spreadRadius: 2,
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 10.0, sigmaY: 10.0),
+          child: BottomNavigationBar(
+            backgroundColor: Colors.transparent,
+            selectedItemColor: Colors.white,
+            unselectedItemColor: accentColor.withOpacity(0.6),
+            currentIndex: selectedIndex,
+            items: HomeScreenMainState._navItems,
+            onTap: onItemTapped,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
