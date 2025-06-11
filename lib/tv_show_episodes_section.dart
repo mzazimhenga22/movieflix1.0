@@ -39,12 +39,10 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
   @override
   void initState() {
     super.initState();
-    debugPrint(
-        'TVShowEpisodesSectionState initState called with tvId: ${widget.tvId}');
     _selectedSeasonNumber = widget.seasons.isNotEmpty
         ? (widget.seasons.first['season_number'] as int? ?? 1)
         : 1;
-    _fetchTVShowDetails(); // Fetch TV show details to get release year
+    _fetchTVShowDetails();
   }
 
   Future<void> _fetchTVShowDetails() async {
@@ -52,20 +50,23 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
       final tvDetails = await tmdb.TMDBApi.fetchTVShowDetails(widget.tvId);
       final firstAirDate =
           tvDetails['first_air_date'] as String? ?? '1970-01-01';
-      setState(() {
-        _releaseYear = int.parse(firstAirDate.split('-')[0]);
-      });
+      if (mounted) {
+        setState(() {
+          _releaseYear = int.parse(firstAirDate.split('-')[0]);
+        });
+      }
     } catch (e) {
       debugPrint('Failed to fetch TV show details: $e');
-      setState(() {
-        _releaseYear = 1970; // Fallback
-      });
+      if (mounted) {
+        setState(() {
+          _releaseYear = 1970; // Fallback
+        });
+      }
     }
   }
 
   @override
   void dispose() {
-    debugPrint('TVShowEpisodesSectionState dispose called');
     super.dispose();
   }
 
@@ -77,7 +78,6 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
       _errorMessage = '';
     });
     try {
-      debugPrint('Fetching episodes for season $seasonNumber');
       final seasonDetails =
           await tmdb.TMDBApi.fetchTVSeasonDetails(widget.tvId, seasonNumber);
       if (!mounted) return;
@@ -94,13 +94,12 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
         _seasonTmdbIdCache[seasonNumber] = null;
         _isLoading = false;
         _fetchError = true;
-        _errorMessage = 'Failed to load episodes: $e';
+        _errorMessage = 'Unable to load episodes. Please try again later.';
       });
     }
   }
 
   void _showLoadingDialog() {
-    debugPrint('Showing episode loading dialog');
     if (!mounted) return;
     showDialog(
       context: context,
@@ -122,8 +121,6 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
 
   void _showEpisodePlayOptionsModal(
       Map<String, dynamic> episode, int seasonNumber) {
-    debugPrint(
-        'Showing episode play options modal for episode: ${episode['name']}');
     if (!mounted) return;
     showModalBottomSheet(
       context: context,
@@ -135,8 +132,6 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
       builder: (modalContext) {
         return _EpisodePlayOptionsModal(
           onConfirm: (resolution, subtitles) async {
-            debugPrint(
-                'Episode play options confirmed: resolution=$resolution, subtitles=$subtitles');
             Navigator.pop(modalContext);
             _showLoadingDialog();
 
@@ -146,10 +141,7 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
             final episodeId = episode['id']?.toString();
             final seasonTmdbId = _seasonTmdbIdCache[seasonNumber];
 
-            // Validate TMDB IDs
             if (episodeId == null || seasonTmdbId == null) {
-              debugPrint(
-                  'Missing TMDB IDs: episodeId=$episodeId, seasonTmdbId=$seasonTmdbId');
               if (mounted) {
                 Navigator.pop(context);
                 showDialog(
@@ -179,7 +171,6 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
                 attempt <= maxRetries && !success;
                 attempt++) {
               try {
-                debugPrint('Fetching streaming info (Attempt $attempt)');
                 streamingInfo = await StreamingService.getStreamingLink(
                   tmdbId: widget.tvId.toString(),
                   title: widget.tvShowName.isNotEmpty
@@ -205,21 +196,19 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
             }
 
             if (!mounted) {
-              debugPrint('Context not mounted, aborting');
               Navigator.pop(context);
               return;
             }
             Navigator.pop(context);
 
             if (!success) {
-              debugPrint('All retries failed: $lastError');
               if (mounted) {
                 showDialog(
                   context: context,
                   builder: (context) => AlertDialog(
                     title: const Text("Streaming Error"),
-                    content: Text(
-                        "Failed to load episode after $maxRetries attempts: $lastError"),
+                    content: const Text(
+                        "Failed to load episode. Please try again later."),
                     actions: [
                       TextButton(
                         onPressed: () => Navigator.pop(context),
@@ -240,9 +229,7 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
                     .toList() ??
                 [];
 
-            debugPrint('Stream URL: $streamUrl, isHls: $isHls');
             if (streamUrl.isEmpty || !(await _isUrlAccessible(streamUrl))) {
-              debugPrint('Stream URL is empty or inaccessible');
               if (mounted) {
                 showDialog(
                   context: context,
@@ -262,7 +249,6 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
               return;
             }
 
-            debugPrint('Navigating to MainVideoPlayer');
             if (mounted) {
               Navigator.push(
                 context,
@@ -287,7 +273,6 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
 
   @override
   Widget build(BuildContext context) {
-    debugPrint('TVShowEpisodesSectionState build called');
     if (widget.seasons.isEmpty) return const SizedBox.shrink();
 
     return Consumer<SettingsProvider>(
@@ -364,11 +349,11 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
   Widget _buildEpisodesList() {
     final episodes = _episodesCache[_selectedSeasonNumber] ?? [];
     if (episodes.isEmpty) {
-      return Padding(
-        padding: const EdgeInsets.all(16),
+      return const Padding(
+        padding: EdgeInsets.all(16),
         child: Text(
-          'No episodes found for season $_selectedSeasonNumber.',
-          style: const TextStyle(color: Colors.white70),
+          'No episodes found for this season.',
+          style: TextStyle(color: Colors.white70),
         ),
       );
     }
@@ -376,6 +361,7 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
     return ListView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
+      itemExtent: 100.0, // Added for smoother scrolling performance
       itemCount: episodes.length,
       itemBuilder: (context, index) {
         final episode = episodes[index];
@@ -578,8 +564,6 @@ class _EpisodePlayOptionsModalState extends State<_EpisodePlayOptionsModal> {
               style: ElevatedButton.styleFrom(
                   backgroundColor: settings.accentColor),
               onPressed: () {
-                debugPrint(
-                    'Episode Play Now button pressed: resolution=$_resolution, subtitles=$_subtitles');
                 widget.onConfirm(_resolution, _subtitles);
               },
               child:
@@ -607,7 +591,6 @@ class LoadingDialogState extends State<LoadingDialog> {
   @override
   void initState() {
     super.initState();
-    debugPrint('LoadingDialogState initState called');
     _timeoutTimer = Timer(const Duration(seconds: 30), () {
       if (mounted) setState(() => showSecondMessage = true);
     });
@@ -615,7 +598,6 @@ class LoadingDialogState extends State<LoadingDialog> {
 
   @override
   void dispose() {
-    debugPrint('LoadingDialogState dispose called');
     _timeoutTimer?.cancel();
     super.dispose();
   }
@@ -649,7 +631,6 @@ class LoadingDialogState extends State<LoadingDialog> {
                 style: ElevatedButton.styleFrom(
                     backgroundColor: settings.accentColor),
                 onPressed: () {
-                  debugPrint('Loading dialog canceled by user');
                   Navigator.pop(context);
                 },
                 child:
@@ -662,3 +643,4 @@ class LoadingDialogState extends State<LoadingDialog> {
     );
   }
 }
+
