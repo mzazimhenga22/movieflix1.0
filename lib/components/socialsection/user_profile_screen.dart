@@ -7,6 +7,8 @@ import 'dart:io' show File;
 import 'dart:ui';
 import 'stories.dart';
 import 'edit_profile_screen.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:async';
 
 class UserProfileScreen extends StatefulWidget {
   final Map<String, dynamic> user;
@@ -28,17 +30,19 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   late Map<String, dynamic> _user;
   final TextEditingController _searchController = TextEditingController();
   List<Map<String, dynamic>> _stories = [];
+  Timer? _debounce;
 
   @override
   void initState() {
     super.initState();
     _user = _sanitizeUserData(widget.user);
     _loadStories();
+    _searchController.addListener(_onSearchChanged);
+    _checkAndShowReminder();
   }
 
   Future<void> _loadStories() async {
-    final snapshot =
-        await FirebaseFirestore.instance.collection('stories').get();
+    final snapshot = await FirebaseFirestore.instance.collection('stories').get();
     setState(() {
       _stories = snapshot.docs
           .map((doc) {
@@ -51,6 +55,99 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
               const Duration(hours: 24))
           .toList();
     });
+  }
+
+  void _onSearchChanged() {
+    if (_debounce?.isActive ?? false) _debounce!.cancel();
+    _debounce = Timer(const Duration(milliseconds: 500), () {
+      setState(() {});
+    });
+  }
+
+  Future<void> _checkAndShowReminder() async {
+    final prefs = await SharedPreferences.getInstance();
+    final today = DateTime.now().toIso8601String().split('T')[0];
+    final lastVisitDate = prefs.getString('last_visit_date') ?? '';
+    final visitCount = prefs.getInt('visit_count') ?? 0;
+
+    if (lastVisitDate != today) {
+      await prefs.setString('last_visit_date', today);
+      await prefs.setInt('visit_count', 1);
+    } else {
+      await prefs.setInt('visit_count', visitCount + 1);
+    }
+
+    if (visitCount >= 1 && _user['username'] == 'Guest') {
+      _showNicknameReminder();
+    }
+  }
+
+  void _showNicknameReminder() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color.fromARGB(255, 17, 25, 40),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          "Personalize Your Profile",
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        ),
+        content: const Text(
+          "Hey there! It looks like you haven't set a nickname yet. Add one to make your profile stand out!",
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Later", style: TextStyle(color: Colors.white70)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => EditProfileScreen(
+                    user: _user,
+                    accentColor: widget.accentColor,
+                    onProfileUpdated: (updatedUser) {
+                      setState(() {
+                        _user = _sanitizeUserData(updatedUser);
+                      });
+                    },
+                  ),
+                ),
+              );
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: widget.accentColor,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            child: const Text("Set Nickname"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String extractFirstName(String email) {
+    final parts = email.split('@').first.split('.');
+    return parts.isNotEmpty ? parts.first.capitalize() : 'Guest';
+  }
+
+  Map<String, dynamic> _sanitizeUserData(Map<String, dynamic> user) {
+    final email = user['email']?.toString() ?? '';
+    final username = user['username']?.toString() ?? user['name']?.toString() ?? extractFirstName(email);
+    return {
+      'id': user['id']?.toString() ?? '',
+      'username': username,
+      'email': email,
+      'avatar': user['avatar']?.toString() ?? '',
+      'bio': user['bio']?.toString() ?? 'No bio available.',
+      'followers_count': user['followers_count'] ?? 0,
+      'following_count': user['following_count'] ?? 0,
+    };
   }
 
   ImageProvider _buildAvatarImage() {
@@ -155,8 +252,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
 
   Future<List<Map<String, dynamic>>> _searchUsers(String query) async {
     if (query.isEmpty) {
-      final snapshot =
-          await FirebaseFirestore.instance.collection('users').get();
+      final snapshot = await FirebaseFirestore.instance.collection('users').get();
       return snapshot.docs.map((doc) {
         final data = doc.data();
         return _sanitizeUserData({...data, 'id': doc.id});
@@ -185,22 +281,11 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     return count?.toString() ?? '0';
   }
 
-  Map<String, dynamic> _sanitizeUserData(Map<String, dynamic> user) {
-    return {
-      'id': user['id']?.toString() ?? '',
-      'username':
-          user['username']?.toString() ?? user['name']?.toString() ?? 'Guest',
-      'email': user['email']?.toString() ?? '',
-      'avatar': user['avatar']?.toString() ?? '',
-      'bio': user['bio']?.toString() ?? 'No bio available.',
-      'followers_count': user['followers_count'] ?? 0,
-      'following_count': user['following_count'] ?? 0,
-    };
-  }
-
   @override
   void dispose() {
+    _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
+    _debounce?.cancel();
     super.dispose();
   }
 
@@ -216,8 +301,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
           ? AppBar(
               backgroundColor: Colors.transparent,
               elevation: 0,
-              title: Text(displayName,
-                  style: const TextStyle(color: Colors.white, fontSize: 20)),
+              title: Text(displayName, style: const TextStyle(color: Colors.white, fontSize: 20)),
             )
           : null,
       body: Stack(
@@ -234,9 +318,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
             ),
           ),
           Positioned.fill(
-            top: widget.showAppBar
-                ? kToolbarHeight + MediaQuery.of(context).padding.top
-                : 0,
+            top: widget.showAppBar ? kToolbarHeight + MediaQuery.of(context).padding.top : 0,
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               child: Container(
@@ -244,10 +326,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                   gradient: RadialGradient(
                     center: Alignment.center,
                     radius: 1.6,
-                    colors: [
-                      widget.accentColor.withOpacity(0.2),
-                      Colors.transparent
-                    ],
+                    colors: [widget.accentColor.withOpacity(0.2), Colors.transparent],
                     stops: const [0.0, 1.0],
                   ),
                   borderRadius: BorderRadius.circular(16),
@@ -268,15 +347,11 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                       decoration: BoxDecoration(
                         color: const Color.fromARGB(180, 17, 19, 40),
                         borderRadius: BorderRadius.circular(16),
-                        border:
-                            Border.all(color: Colors.white.withOpacity(0.1)),
+                        border: Border.all(color: Colors.white.withOpacity(0.1)),
                       ),
                       child: SingleChildScrollView(
                         padding: EdgeInsets.only(
-                            top: widget.showAppBar ? 16 : 48,
-                            left: 16,
-                            right: 16,
-                            bottom: 24),
+                            top: widget.showAppBar ? 16 : 48, left: 16, right: 16, bottom: 24),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
@@ -292,17 +367,12 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                         final userStories = snapshot.docs
                                             .map((doc) {
                                               final data = doc.data();
-                                              return <String, dynamic>{
-                                                ...data,
-                                                'id': doc.id
-                                              };
+                                              return <String, dynamic>{...data, 'id': doc.id};
                                             })
                                             .where((story) =>
-                                                DateTime.now().difference(
-                                                    DateTime.parse(story[
-                                                            'timestamp'] ??
-                                                        DateTime.now()
-                                                            .toIso8601String())) <
+                                                DateTime.now().difference(DateTime.parse(
+                                                    story['timestamp'] ??
+                                                        DateTime.now().toIso8601String())) <
                                                 const Duration(hours: 24))
                                             .toList();
                                         if (userStories.isNotEmpty) {
@@ -312,8 +382,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                               builder: (_) => StoryScreen(
                                                 stories: userStories,
                                                 initialIndex: 0,
-                                                currentUserId:
-                                                    currentUser?.uid ?? '',
+                                                currentUserId: currentUser?.uid ?? '',
                                               ),
                                             ),
                                           );
@@ -325,14 +394,10 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                 decoration: _hasActiveStory()
                                     ? BoxDecoration(
                                         shape: BoxShape.circle,
-                                        border: Border.all(
-                                            color:
-                                                Colors.yellow.withOpacity(0.8),
-                                            width: 2),
+                                        border: Border.all(color: Colors.yellow.withOpacity(0.8), width: 2),
                                         boxShadow: [
                                           BoxShadow(
-                                            color:
-                                                Colors.yellow.withOpacity(0.6),
+                                            color: Colors.yellow.withOpacity(0.6),
                                             blurRadius: 8,
                                             spreadRadius: 1,
                                           ),
@@ -348,17 +413,11 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                       width: 100,
                                       height: 100,
                                       fit: BoxFit.cover,
-                                      errorBuilder:
-                                          (context, error, stackTrace) =>
-                                              Center(
+                                      errorBuilder: (context, error, stackTrace) => Center(
                                         child: Text(
-                                          displayName.isNotEmpty
-                                              ? displayName[0].toUpperCase()
-                                              : "G",
+                                          displayName.isNotEmpty ? displayName[0].toUpperCase() : "G",
                                           style: const TextStyle(
-                                              fontSize: 40,
-                                              color: Colors.white,
-                                              fontWeight: FontWeight.bold),
+                                              fontSize: 40, color: Colors.white, fontWeight: FontWeight.bold),
                                         ),
                                       ),
                                     ),
@@ -373,39 +432,26 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                   fontSize: 24,
                                   fontWeight: FontWeight.bold,
                                   color: Colors.white,
-                                  shadows: [
-                                    Shadow(
-                                        color: Colors.black45,
-                                        offset: Offset(1, 1),
-                                        blurRadius: 2)
-                                  ]),
+                                  shadows: [Shadow(color: Colors.black45, offset: Offset(1, 1), blurRadius: 2)]),
                             ),
                             const SizedBox(height: 12),
                             Row(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                Text(
-                                    'Followers: ${_displayCount(_user['followers_count'])}',
-                                    style: const TextStyle(
-                                        color: Colors.white70, fontSize: 14)),
+                                Text('Followers: ${_displayCount(_user['followers_count'])}',
+                                    style: const TextStyle(color: Colors.white70, fontSize: 14)),
                                 const SizedBox(width: 16),
-                                Text(
-                                    'Following: ${_displayCount(_user['following_count'])}',
-                                    style: const TextStyle(
-                                        color: Colors.white70, fontSize: 14)),
+                                Text('Following: ${_displayCount(_user['following_count'])}',
+                                    style: const TextStyle(color: Colors.white70, fontSize: 14)),
                               ],
                             ),
                             const SizedBox(height: 12),
-                            Text(_user['email'],
-                                style: const TextStyle(
-                                    fontSize: 14, color: Colors.white70)),
+                            Text(_user['email'], style: const TextStyle(fontSize: 14, color: Colors.white70)),
                             const SizedBox(height: 12),
                             Text(
                               _user['bio'],
                               textAlign: TextAlign.center,
-                              style: TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.white.withOpacity(0.8)),
+                              style: TextStyle(fontSize: 14, color: Colors.white.withOpacity(0.8)),
                             ),
                             const SizedBox(height: 16),
                             if (!isOwnProfile && currentUser != null)
@@ -417,43 +463,32 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                     .doc(_user['id'])
                                     .snapshots(),
                                 builder: (context, snapshot) {
-                                  if (snapshot.connectionState ==
-                                      ConnectionState.waiting) {
+                                  if (snapshot.connectionState == ConnectionState.waiting) {
                                     return const CircularProgressIndicator();
                                   }
-                                  final isFollowing =
-                                      snapshot.data?.exists ?? false;
+                                  final isFollowing = snapshot.data?.exists ?? false;
                                   return ElevatedButton(
                                     onPressed: () async {
                                       if (isFollowing) {
-                                        await _unfollowUser(
-                                            currentUser.uid, _user['id']);
+                                        await _unfollowUser(currentUser.uid, _user['id']);
                                       } else {
-                                        await _followUser(
-                                            currentUser.uid, _user['id']);
+                                        await _followUser(currentUser.uid, _user['id']);
                                       }
                                     },
                                     style: ElevatedButton.styleFrom(
                                       backgroundColor: widget.accentColor,
                                       foregroundColor: Colors.white,
-                                      shape: RoundedRectangleBorder(
-                                          borderRadius:
-                                              BorderRadius.circular(12)),
-                                      padding: const EdgeInsets.symmetric(
-                                          vertical: 12, horizontal: 20),
-                                      minimumSize:
-                                          const Size(double.infinity, 48),
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 20),
+                                      minimumSize: const Size(double.infinity, 48),
                                     ),
-                                    child: Text(
-                                        isFollowing ? 'Unfollow' : 'Follow',
-                                        style: const TextStyle(fontSize: 16)),
+                                    child: Text(isFollowing ? 'Unfollow' : 'Follow', style: const TextStyle(fontSize: 16)),
                                   );
                                 },
                               ),
                             if (isOwnProfile && currentUser != null)
                               Padding(
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 16),
+                                padding: const EdgeInsets.symmetric(vertical: 16),
                                 child: ElevatedButton.icon(
                                   onPressed: () {
                                     Navigator.push(
@@ -464,8 +499,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                           accentColor: widget.accentColor,
                                           onProfileUpdated: (updatedUser) {
                                             setState(() {
-                                              _user = _sanitizeUserData(
-                                                  updatedUser);
+                                              _user = _sanitizeUserData(updatedUser);
                                             });
                                           },
                                         ),
@@ -473,18 +507,13 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                     );
                                   },
                                   icon: const Icon(Icons.edit, size: 20),
-                                  label: const Text("Edit Profile",
-                                      style: TextStyle(fontSize: 16)),
+                                  label: const Text("Edit Profile", style: TextStyle(fontSize: 16)),
                                   style: ElevatedButton.styleFrom(
                                     backgroundColor: widget.accentColor,
                                     foregroundColor: Colors.white,
-                                    shape: RoundedRectangleBorder(
-                                        borderRadius:
-                                            BorderRadius.circular(12)),
-                                    padding: const EdgeInsets.symmetric(
-                                        vertical: 12, horizontal: 20),
-                                    minimumSize:
-                                        const Size(double.infinity, 48),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 20),
+                                    minimumSize: const Size(double.infinity, 48),
                                   ),
                                 ),
                               ),
@@ -496,12 +525,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                   fontSize: 18,
                                   fontWeight: FontWeight.bold,
                                   color: Colors.white,
-                                  shadows: [
-                                    Shadow(
-                                        color: Colors.black45,
-                                        offset: Offset(1, 1),
-                                        blurRadius: 2)
-                                  ]),
+                                  shadows: [Shadow(color: Colors.black45, offset: Offset(1, 1), blurRadius: 2)]),
                             ),
                             const SizedBox(height: 12),
                             StreamBuilder<QuerySnapshot>(
@@ -513,28 +537,19 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                   .snapshots(),
                               builder: (context, snapshot) {
                                 if (snapshot.hasError) {
-                                  return Text('Error: ${snapshot.error}',
-                                      style:
-                                          const TextStyle(color: Colors.white));
+                                  return Text('Error: ${snapshot.error}', style: const TextStyle(color: Colors.white));
                                 }
                                 if (!snapshot.hasData) {
-                                  return const Center(
-                                      child: CircularProgressIndicator());
+                                  return const Center(child: CircularProgressIndicator());
                                 }
                                 final posts = snapshot.data!.docs.map((doc) {
-                                  final data =
-                                      doc.data() as Map<String, dynamic>;
-                                  return <String, dynamic>{
-                                    ...data,
-                                    'id': doc.id
-                                  };
+                                  final data = doc.data() as Map<String, dynamic>;
+                                  return <String, dynamic>{...data, 'id': doc.id};
                                 }).toList();
                                 if (posts.isEmpty) {
                                   return Card(
                                     elevation: 4,
-                                    shape: RoundedRectangleBorder(
-                                        borderRadius:
-                                            BorderRadius.circular(12)),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                                     child: Container(
                                       decoration: BoxDecoration(
                                         gradient: LinearGradient(
@@ -546,16 +561,12 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                           end: Alignment.bottomRight,
                                         ),
                                         borderRadius: BorderRadius.circular(12),
-                                        border: Border.all(
-                                            color: widget.accentColor
-                                                .withOpacity(0.3)),
+                                        border: Border.all(color: widget.accentColor.withOpacity(0.3)),
                                       ),
                                       child: const Padding(
                                         padding: EdgeInsets.all(16),
                                         child: Text("No posts available.",
-                                            style: TextStyle(
-                                                fontSize: 15,
-                                                color: Colors.white70)),
+                                            style: TextStyle(fontSize: 15, color: Colors.white70)),
                                       ),
                                     ),
                                   );
@@ -568,118 +579,72 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                     final post = posts[index];
                                     return Card(
                                       elevation: 4,
-                                      shape: RoundedRectangleBorder(
-                                          borderRadius:
-                                              BorderRadius.circular(12)),
-                                      margin: const EdgeInsets.symmetric(
-                                          vertical: 8),
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                      margin: const EdgeInsets.symmetric(vertical: 8),
                                       child: Container(
                                         decoration: BoxDecoration(
                                           gradient: LinearGradient(
                                             colors: [
-                                              widget.accentColor
-                                                  .withOpacity(0.1),
-                                              widget.accentColor
-                                                  .withOpacity(0.3)
+                                              widget.accentColor.withOpacity(0.1),
+                                              widget.accentColor.withOpacity(0.3)
                                             ],
                                             begin: Alignment.topLeft,
                                             end: Alignment.bottomRight,
                                           ),
-                                          borderRadius:
-                                              BorderRadius.circular(12),
-                                          border: Border.all(
-                                              color: widget.accentColor
-                                                  .withOpacity(0.3)),
+                                          borderRadius: BorderRadius.circular(12),
+                                          border: Border.all(color: widget.accentColor.withOpacity(0.3)),
                                         ),
                                         child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
+                                          crossAxisAlignment: CrossAxisAlignment.start,
                                           children: [
                                             ListTile(
-                                              title: Text(
-                                                  post['user'] ?? 'Unknown',
+                                              title: Text(post['user'] ?? 'Unknown',
                                                   style: const TextStyle(
-                                                      fontWeight:
-                                                          FontWeight.bold,
+                                                      fontWeight: FontWeight.bold,
                                                       color: Colors.white,
                                                       shadows: [
                                                         Shadow(
-                                                            color:
-                                                                Colors.black45,
-                                                            offset:
-                                                                Offset(1, 1),
+                                                            color: Colors.black45,
+                                                            offset: Offset(1, 1),
                                                             blurRadius: 2)
                                                       ])),
                                               trailing: isOwnProfile
                                                   ? IconButton(
-                                                      icon: const Icon(
-                                                          Icons.delete,
-                                                          color: Colors.red,
-                                                          size: 22),
+                                                      icon: const Icon(Icons.delete, color: Colors.red, size: 22),
                                                       onPressed: () async {
-                                                        final confirm =
-                                                            await showDialog<
-                                                                bool>(
+                                                        final confirm = await showDialog<bool>(
                                                           context: context,
-                                                          builder: (context) =>
-                                                              AlertDialog(
-                                                            backgroundColor:
-                                                                const Color
-                                                                        .fromARGB(
-                                                                    255,
-                                                                    17,
-                                                                    25,
-                                                                    40),
-                                                            title: const Text(
-                                                                "Delete Post",
-                                                                style: TextStyle(
-                                                                    color: Colors
-                                                                        .white)),
+                                                          builder: (context) => AlertDialog(
+                                                            backgroundColor: const Color.fromARGB(255, 17, 25, 40),
+                                                            title: const Text("Delete Post",
+                                                                style: TextStyle(color: Colors.white)),
                                                             content: const Text(
                                                                 "Are you sure you want to delete this post?",
-                                                                style: TextStyle(
-                                                                    color: Colors
-                                                                        .white70)),
+                                                                style: TextStyle(color: Colors.white70)),
                                                             actions: [
                                                               TextButton(
-                                                                onPressed: () =>
-                                                                    Navigator.pop(
-                                                                        context,
-                                                                        false),
-                                                                child: const Text(
-                                                                    "Cancel",
-                                                                    style: TextStyle(
-                                                                        color: Colors
-                                                                            .white70)),
+                                                                onPressed: () => Navigator.pop(context, false),
+                                                                child: const Text("Cancel",
+                                                                    style: TextStyle(color: Colors.white70)),
                                                               ),
                                                               ElevatedButton(
                                                                 style: ElevatedButton.styleFrom(
-                                                                    backgroundColor:
-                                                                        Colors
-                                                                            .red,
-                                                                    foregroundColor:
-                                                                        Colors
-                                                                            .white),
-                                                                onPressed: () =>
-                                                                    Navigator.pop(
-                                                                        context,
-                                                                        true),
-                                                                child: const Text(
-                                                                    "Delete"),
+                                                                    backgroundColor: Colors.red,
+                                                                    foregroundColor: Colors.white),
+                                                                onPressed: () => Navigator.pop(context, true),
+                                                                child: const Text("Delete"),
                                                               ),
                                                             ],
                                                           ),
                                                         );
                                                         if (confirm == true) {
-                                                          await _deletePost(
-                                                              post['id']);
+                                                          await _deletePost(post['id']);
                                                         }
                                                       },
                                                     )
                                                   : null,
                                             ),
-                                            if (post['media']?.isNotEmpty ??
-                                                false)
+                                            if (post['media']?.isNotEmpty ?? false)
                                               if (post['mediaType'] == 'photo')
                                                 CachedNetworkImage(
                                                   imageUrl: post['media']!,
@@ -687,92 +652,60 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                                   width: double.infinity,
                                                   fit: BoxFit.cover,
                                                   placeholder: (context, url) =>
-                                                      const Center(
-                                                          child:
-                                                              CircularProgressIndicator()),
-                                                  errorWidget:
-                                                      (context, url, error) =>
-                                                          Container(
+                                                      const Center(child: CircularProgressIndicator()),
+                                                  errorWidget: (context, url, error) => Container(
                                                     height: 180,
                                                     color: Colors.grey[300],
-                                                    child: const Center(
-                                                        child: Icon(Icons.error,
-                                                            size: 40)),
+                                                    child: const Center(child: Icon(Icons.error, size: 40)),
                                                   ),
                                                 )
-                                              else if (post['mediaType'] ==
-                                                  'video')
+                                              else if (post['mediaType'] == 'video')
                                                 Container(
                                                   height: 180,
                                                   color: Colors.black,
                                                   child: const Center(
-                                                      child: Text(
-                                                          'Video content',
-                                                          style: TextStyle(
-                                                              color: Colors
-                                                                  .white))),
+                                                      child:
+                                                          Text('Video content', style: TextStyle(color: Colors.white))),
                                                 )
                                               else
                                                 Container(
                                                   height: 180,
                                                   color: Colors.grey[300],
-                                                  child: const Center(
-                                                      child: Icon(Icons.image,
-                                                          size: 40)),
+                                                  child: const Center(child: Icon(Icons.image, size: 40)),
                                                 ),
                                             Padding(
                                               padding: const EdgeInsets.all(12),
                                               child: Column(
-                                                crossAxisAlignment:
-                                                    CrossAxisAlignment.start,
+                                                crossAxisAlignment: CrossAxisAlignment.start,
                                                 children: [
                                                   Text(post['post'] ?? '',
-                                                      style: const TextStyle(
-                                                          fontSize: 15,
-                                                          color:
-                                                              Colors.white70)),
+                                                      style: const TextStyle(fontSize: 15, color: Colors.white70)),
                                                   const SizedBox(height: 8),
-                                                  Text(
-                                                      "Movie: ${post['movie'] ?? 'Unknown'}",
+                                                  Text("Movie: ${post['movie'] ?? 'Unknown'}",
                                                       style: const TextStyle(
-                                                          fontStyle:
-                                                              FontStyle.italic,
-                                                          color:
-                                                              Colors.white70)),
+                                                          fontStyle: FontStyle.italic, color: Colors.white70)),
                                                 ],
                                               ),
                                             ),
-                                            const Divider(
-                                                color: Colors.white54,
-                                                height: 1),
+                                            const Divider(color: Colors.white54, height: 1),
                                             Row(
-                                              mainAxisAlignment:
-                                                  MainAxisAlignment.spaceEvenly,
+                                              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                                               children: [
                                                 IconButton(
                                                   icon: Icon(
-                                                    post['liked'] == true
-                                                        ? Icons.favorite
-                                                        : Icons.favorite_border,
-                                                    color: post['liked'] == true
-                                                        ? Colors.red
-                                                        : Colors.white70,
+                                                    post['liked'] == true ? Icons.favorite : Icons.favorite_border,
+                                                    color: post['liked'] == true ? Colors.red : Colors.white70,
                                                     size: 22,
                                                   ),
                                                   onPressed: currentUser != null
                                                       ? () async {
-                                                          await _likePost(
-                                                              post['id'],
-                                                              post['liked'] ??
-                                                                  false,
+                                                          await _likePost(post['id'], post['liked'] ?? false,
                                                               _user['id']);
                                                         }
                                                       : null,
                                                 ),
-                                                Text(
-                                                    '${post['likes_count'] ?? 0} Likes',
-                                                    style: const TextStyle(
-                                                        color: Colors.white70)),
+                                                Text('${post['likes_count'] ?? 0} Likes',
+                                                    style: const TextStyle(color: Colors.white70)),
                                               ],
                                             ),
                                           ],
@@ -787,317 +720,64 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                             const Divider(color: Colors.white54, thickness: 1),
                             const SizedBox(height: 16),
                             const Text(
-                              "Followers",
-                              style: TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.white,
-                                  shadows: [
-                                    Shadow(
-                                        color: Colors.black45,
-                                        offset: Offset(1, 1),
-                                        blurRadius: 2)
-                                  ]),
-                            ),
-                            const SizedBox(height: 12),
-                            StreamBuilder<QuerySnapshot>(
-                              stream: FirebaseFirestore.instance
-                                  .collection('users')
-                                  .doc(_user['id'])
-                                  .collection('followers')
-                                  .snapshots(),
-                              builder: (context, snapshot) {
-                                if (snapshot.connectionState ==
-                                    ConnectionState.waiting) {
-                                  return const CircularProgressIndicator();
-                                }
-                                final followerIds = snapshot.data?.docs
-                                        .map((doc) => doc.id)
-                                        .toList() ??
-                                    [];
-                                if (followerIds.isEmpty) {
-                                  return const Text("No followers.",
-                                      style: TextStyle(color: Colors.white70));
-                                }
-                                return FutureBuilder<
-                                    List<Map<String, dynamic>>>(
-                                  future: FirebaseFirestore.instance
-                                      .collection('users')
-                                      .where(FieldPath.documentId,
-                                          whereIn: followerIds)
-                                      .get()
-                                      .then((snapshot) =>
-                                          snapshot.docs.map((doc) {
-                                            final data = doc.data();
-                                            return _sanitizeUserData(
-                                                {...data, 'id': doc.id});
-                                          }).toList()),
-                                  builder: (context, snapshot) {
-                                    if (snapshot.connectionState ==
-                                        ConnectionState.waiting) {
-                                      return const CircularProgressIndicator();
-                                    }
-                                    final followers = snapshot.data ?? [];
-                                    final displayFollowers =
-                                        followers.length > 5
-                                            ? followers.sublist(0, 5)
-                                            : followers;
-                                    return Column(
-                                      children: [
-                                        ListView.builder(
-                                          shrinkWrap: true,
-                                          physics:
-                                              const NeverScrollableScrollPhysics(),
-                                          itemCount: displayFollowers.length,
-                                          itemBuilder: (context, index) {
-                                            final follower =
-                                                displayFollowers[index];
-                                            return ListTile(
-                                              leading: CircleAvatar(
-                                                backgroundColor:
-                                                    widget.accentColor,
-                                                child: Text(
-                                                    follower['username'][0]
-                                                        .toUpperCase(),
-                                                    style: const TextStyle(
-                                                        color: Colors.white)),
-                                              ),
-                                              title: Text(follower['username'],
-                                                  style: const TextStyle(
-                                                      color: Colors.white,
-                                                      fontSize: 16)),
-                                              onTap: () => Navigator.push(
-                                                context,
-                                                MaterialPageRoute(
-                                                  builder: (context) =>
-                                                      UserProfileScreen(
-                                                          user: follower,
-                                                          showAppBar: true,
-                                                          accentColor: widget
-                                                              .accentColor),
-                                                ),
-                                              ),
-                                            );
-                                          },
-                                        ),
-                                        if (followers.length > 5)
-                                          Padding(
-                                            padding: const EdgeInsets.all(8.0),
-                                            child: Text(
-                                                'and ${followers.length - 5} more',
-                                                style: const TextStyle(
-                                                    color: Colors.white70,
-                                                    fontSize: 14)),
-                                          ),
-                                      ],
-                                    );
-                                  },
-                                );
-                              },
-                            ),
-                            const SizedBox(height: 16),
-                            const Text(
-                              "Following",
-                              style: TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.white,
-                                  shadows: [
-                                    Shadow(
-                                        color: Colors.black45,
-                                        offset: Offset(1, 1),
-                                        blurRadius: 2)
-                                  ]),
-                            ),
-                            const SizedBox(height: 12),
-                            StreamBuilder<QuerySnapshot>(
-                              stream: FirebaseFirestore.instance
-                                  .collection('users')
-                                  .doc(_user['id'])
-                                  .collection('following')
-                                  .snapshots(),
-                              builder: (context, snapshot) {
-                                if (snapshot.connectionState ==
-                                    ConnectionState.waiting) {
-                                  return const CircularProgressIndicator();
-                                }
-                                final followingIds = snapshot.data?.docs
-                                        .map((doc) => doc.id)
-                                        .toList() ??
-                                    [];
-                                if (followingIds.isEmpty) {
-                                  return const Text("Not following anyone.",
-                                      style: TextStyle(color: Colors.white70));
-                                }
-                                return FutureBuilder<
-                                    List<Map<String, dynamic>>>(
-                                  future: FirebaseFirestore.instance
-                                      .collection('users')
-                                      .where(FieldPath.documentId,
-                                          whereIn: followingIds)
-                                      .get()
-                                      .then((snapshot) =>
-                                          snapshot.docs.map((doc) {
-                                            final data = doc.data();
-                                            return _sanitizeUserData(
-                                                {...data, 'id': doc.id});
-                                          }).toList()),
-                                  builder: (context, snapshot) {
-                                    if (snapshot.connectionState ==
-                                        ConnectionState.waiting) {
-                                      return const CircularProgressIndicator();
-                                    }
-                                    final following = snapshot.data ?? [];
-                                    final displayFollowing =
-                                        following.length > 5
-                                            ? following.sublist(0, 5)
-                                            : following;
-                                    return Column(
-                                      children: [
-                                        ListView.builder(
-                                          shrinkWrap: true,
-                                          physics:
-                                              const NeverScrollableScrollPhysics(),
-                                          itemCount: displayFollowing.length,
-                                          itemBuilder: (context, index) {
-                                            final follow =
-                                                displayFollowing[index];
-                                            return ListTile(
-                                              leading: CircleAvatar(
-                                                backgroundColor:
-                                                    widget.accentColor,
-                                                child: Text(
-                                                    follow['username'][0]
-                                                        .toUpperCase(),
-                                                    style: const TextStyle(
-                                                        color: Colors.white)),
-                                              ),
-                                              title: Text(follow['username'],
-                                                  style: const TextStyle(
-                                                      color: Colors.white,
-                                                      fontSize: 16)),
-                                              onTap: () => Navigator.push(
-                                                context,
-                                                MaterialPageRoute(
-                                                  builder: (context) =>
-                                                      UserProfileScreen(
-                                                          user: follow,
-                                                          showAppBar: true,
-                                                          accentColor: widget
-                                                              .accentColor),
-                                                ),
-                                              ),
-                                            );
-                                          },
-                                        ),
-                                        if (following.length > 5)
-                                          Padding(
-                                            padding: const EdgeInsets.all(8.0),
-                                            child: Text(
-                                                'and ${following.length - 5} more',
-                                                style: const TextStyle(
-                                                    color: Colors.white70,
-                                                    fontSize: 14)),
-                                          ),
-                                      ],
-                                    );
-                                  },
-                                );
-                              },
-                            ),
-                            const SizedBox(height: 16),
-                            const Divider(color: Colors.white54, thickness: 1),
-                            const SizedBox(height: 16),
-                            const Text(
                               "Find Users",
                               style: TextStyle(
                                   fontSize: 18,
                                   fontWeight: FontWeight.bold,
                                   color: Colors.white,
-                                  shadows: [
-                                    Shadow(
-                                        color: Colors.black45,
-                                        offset: Offset(1, 1),
-                                        blurRadius: 2)
-                                  ]),
+                                  shadows: [Shadow(color: Colors.black45, offset: Offset(1, 1), blurRadius: 2)]),
                             ),
                             const SizedBox(height: 12),
                             TextField(
                               controller: _searchController,
-                              style: const TextStyle(
-                                  color: Colors.white, fontSize: 16),
+                              style: const TextStyle(color: Colors.white, fontSize: 16),
                               decoration: InputDecoration(
-                                hintText: "Search by username or email",
-                                hintStyle: TextStyle(
-                                    color: Colors.white.withOpacity(0.6)),
+                                hintText: "Search by username",
+                                hintStyle: TextStyle(color: Colors.white.withOpacity(0.6)),
                                 filled: true,
                                 fillColor: Colors.white.withOpacity(0.2),
                                 border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                    borderSide: BorderSide.none),
-                                prefixIcon: const Icon(Icons.search,
-                                    color: Colors.white),
+                                    borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                                prefixIcon: const Icon(Icons.search, color: Colors.white),
                               ),
-                              onChanged: (value) => setState(() {}),
                             ),
                             const SizedBox(height: 12),
                             FutureBuilder<List<Map<String, dynamic>>>(
-                              future:
-                                  _searchUsers(_searchController.text.trim()),
+                              future: _searchUsers(_searchController.text.trim()),
                               builder: (context, snapshot) {
-                                if (snapshot.connectionState ==
-                                    ConnectionState.waiting) {
+                                if (snapshot.connectionState == ConnectionState.waiting) {
                                   return const CircularProgressIndicator();
                                 }
                                 if (snapshot.hasError) {
-                                  return Text('Error: ${snapshot.error}',
-                                      style:
-                                          const TextStyle(color: Colors.white));
+                                  return Text('Error: ${snapshot.error}', style: const TextStyle(color: Colors.white));
                                 }
-                                final users = (snapshot.data ?? [])
-                                    .where((u) => u['id'] != _user['id'])
-                                    .toList();
+                                final users = (snapshot.data ?? []).where((u) => u['id'] != _user['id']).toList();
                                 if (users.isEmpty) {
-                                  return const Text("No users found.",
-                                      style: TextStyle(color: Colors.white));
+                                  return const Text("No users found.", style: TextStyle(color: Colors.white));
                                 }
                                 return ListView.separated(
                                   shrinkWrap: true,
                                   physics: const NeverScrollableScrollPhysics(),
                                   itemCount: users.length,
-                                  separatorBuilder: (context, index) =>
-                                      const Divider(color: Colors.white54),
+                                  separatorBuilder: (context, index) => const Divider(color: Colors.white54),
                                   itemBuilder: (context, index) {
                                     final otherUser = users[index];
                                     final otherUserName = otherUser['username'];
                                     return ListTile(
                                       leading: CircleAvatar(
                                         backgroundColor: widget.accentColor,
-                                        backgroundImage: otherUser['avatar']
-                                                    ?.isNotEmpty ==
-                                                true
+                                        backgroundImage: otherUser['avatar']?.isNotEmpty == true
                                             ? NetworkImage(otherUser['avatar'])
                                             : null,
-                                        child:
-                                            otherUser['avatar']?.isNotEmpty !=
-                                                    true
-                                                ? Text(
-                                                    otherUserName.isNotEmpty
-                                                        ? otherUserName[0]
-                                                            .toUpperCase()
-                                                        : "G",
-                                                    style: const TextStyle(
-                                                        color: Colors.white))
-                                                : null,
+                                        child: otherUser['avatar']?.isNotEmpty != true
+                                            ? Text(
+                                                otherUserName.isNotEmpty ? otherUserName[0].toUpperCase() : "G",
+                                                style: const TextStyle(color: Colors.white),
+                                              )
+                                            : null,
                                       ),
                                       title: Text(otherUserName,
-                                          style: const TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 16)),
-                                      subtitle: Text(otherUser['email'],
-                                          style: TextStyle(
-                                              color: Colors.white
-                                                  .withOpacity(0.6))),
+                                          style: const TextStyle(color: Colors.white, fontSize: 16)),
                                       trailing: currentUser != null
                                           ? StreamBuilder<DocumentSnapshot>(
                                               stream: FirebaseFirestore.instance
@@ -1107,49 +787,29 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                                   .doc(otherUser['id'])
                                                   .snapshots(),
                                               builder: (context, snapshot) {
-                                                if (snapshot.connectionState ==
-                                                    ConnectionState.waiting) {
+                                                if (snapshot.connectionState == ConnectionState.waiting) {
                                                   return const SizedBox(
                                                       width: 24,
                                                       height: 24,
-                                                      child:
-                                                          CircularProgressIndicator(
-                                                              strokeWidth: 2));
+                                                      child: CircularProgressIndicator(strokeWidth: 2));
                                                 }
-                                                final isFollowing =
-                                                    snapshot.data?.exists ??
-                                                        false;
+                                                final isFollowing = snapshot.data?.exists ?? false;
                                                 return ElevatedButton(
                                                   onPressed: () async {
                                                     if (isFollowing) {
-                                                      await _unfollowUser(
-                                                          currentUser.uid,
-                                                          otherUser['id']);
+                                                      await _unfollowUser(currentUser.uid, otherUser['id']);
                                                     } else {
-                                                      await _followUser(
-                                                          currentUser.uid,
-                                                          otherUser['id']);
+                                                      await _followUser(currentUser.uid, otherUser['id']);
                                                     }
                                                   },
-                                                  style:
-                                                      ElevatedButton.styleFrom(
-                                                    backgroundColor: isFollowing
-                                                        ? Colors.grey[700]
-                                                        : widget.accentColor,
-                                                    foregroundColor:
-                                                        Colors.white,
-                                                    padding: const EdgeInsets
-                                                            .symmetric(
-                                                        horizontal: 12),
-                                                    minimumSize:
-                                                        const Size(80, 32),
+                                                  style: ElevatedButton.styleFrom(
+                                                    backgroundColor: isFollowing ? Colors.grey[700] : widget.accentColor,
+                                                    foregroundColor: Colors.white,
+                                                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                                                    minimumSize: const Size(80, 32),
                                                   ),
-                                                  child: Text(
-                                                      isFollowing
-                                                          ? 'Unfollow'
-                                                          : 'Follow',
-                                                      style: const TextStyle(
-                                                          fontSize: 12)),
+                                                  child: Text(isFollowing ? 'Unfollow' : 'Follow',
+                                                      style: const TextStyle(fontSize: 12)),
                                                 );
                                               },
                                             )
@@ -1157,8 +817,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                       onTap: () => Navigator.push(
                                         context,
                                         MaterialPageRoute(
-                                          builder: (context) =>
-                                              UserProfileScreen(
+                                          builder: (context) => UserProfileScreen(
                                             user: otherUser,
                                             showAppBar: true,
                                             accentColor: widget.accentColor,
@@ -1182,5 +841,12 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         ],
       ),
     );
+  }
+}
+
+// Extension to capitalize the first letter of a string
+extension StringExtension on String {
+  String capitalize() {
+    return "${this[0].toUpperCase()}${substring(1).toLowerCase()}";
   }
 }
