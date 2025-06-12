@@ -17,6 +17,12 @@ class StreamingNotAvailableException implements Exception {
 class StreamingService {
   static final _logger = Logger();
 
+  static int _parseResolution(String? res) {
+    if (res == null) return 0;
+    final match = RegExp(r'(\d+)p').firstMatch(res);
+    return match != null ? int.tryParse(match.group(1)!) ?? 0 : 0;
+  }
+
   static Future<Map<String, String>> getStreamingLink({
     required String tmdbId,
     required String title,
@@ -63,7 +69,6 @@ class StreamingService {
         );
       }
 
-      // -- Updated decoding to accept both 'streams' array or single 'stream' object
       final decodedRaw = jsonDecode(response.body);
       if (decodedRaw is! Map<String, dynamic>) {
         _logger.e('Invalid response format (not a JSON object): $decodedRaw');
@@ -85,9 +90,43 @@ class StreamingService {
         _logger.w('No streams found');
         throw StreamingNotAvailableException('No streaming links available.');
       }
-      // -- End decoding update
 
-      final selectedStream = streams.first;
+      Map<String, dynamic> selectedStream;
+      if (resolution == "auto") {
+        // Find HLS streams
+        List<Map<String, dynamic>> hlsStreams = streams.where((s) {
+          final type = s['type'] as String?;
+          final url = s['url'] as String?;
+          return type == 'm3u8' || (url != null && url.endsWith('.m3u8'));
+        }).toList();
+
+        if (hlsStreams.isNotEmpty) {
+          selectedStream = hlsStreams.first;
+        } else {
+          // Find non-HLS streams
+          List<Map<String, dynamic>> nonHlsStreams = streams.where((s) {
+            final type = s['type'] as String?;
+            final url = s['url'] as String?;
+            return type != 'm3u8' && (url == null || !url.endsWith('.m3u8'));
+          }).toList();
+
+          if (nonHlsStreams.isEmpty) {
+            throw StreamingNotAvailableException(
+                'No streaming links available.');
+          }
+
+          // Sort by resolution descending
+          nonHlsStreams.sort((a, b) => _parseResolution(b['resolution'])
+              .compareTo(_parseResolution(a['resolution'])));
+          selectedStream = nonHlsStreams.first;
+        }
+      } else {
+        if (streams.isEmpty) {
+          throw StreamingNotAvailableException(
+              'No streaming links available for the specified resolution.');
+        }
+        selectedStream = streams.first;
+      }
 
       String? playlist;
       String streamType = 'm3u8';
@@ -101,7 +140,7 @@ class StreamingService {
               .startsWith('data:application/vnd.apple.mpegurl;base64,')) {
         final base64Part = playlistEncoded.split(',')[1];
         playlist = utf8.decode(base64Decode(base64Part));
-        _logger.i('Decoded M3U8 playlist:\n\$playlist');
+        _logger.i('Decoded M3U8 playlist:\n$playlist');
 
         if (kIsWeb) {
           final bytes = base64Decode(base64Part);
@@ -117,7 +156,7 @@ class StreamingService {
       } else {
         final urlValue = selectedStream['url']?.toString();
         if (urlValue == null || urlValue.isEmpty) {
-          _logger.e('No stream URL provided: \$selectedStream');
+          _logger.e('No stream URL provided: $selectedStream');
           throw StreamingNotAvailableException('No stream URL available.');
         }
         streamUrl = urlValue;
@@ -136,7 +175,7 @@ class StreamingService {
               }
             } else {
               _logger.e(
-                  'Failed to fetch M3U8 playlist: \${playlistResponse.statusCode}');
+                  'Failed to fetch M3U8 playlist: ${playlistResponse.statusCode}');
               throw StreamingNotAvailableException('Failed to fetch playlist.');
             }
           }
@@ -167,11 +206,11 @@ class StreamingService {
               }
             } else {
               _logger.w(
-                  'Failed to download subtitles: \${subtitleResponse.statusCode}');
+                  'Failed to download subtitles: ${subtitleResponse.statusCode}');
               subtitleUrl = '';
             }
           } catch (e) {
-            _logger.w('Error downloading subtitles: \$e');
+            _logger.w('Error downloading subtitles: $e');
             subtitleUrl = '';
           }
         }
@@ -189,10 +228,10 @@ class StreamingService {
         result['subtitleUrl'] = subtitleUrl;
       }
 
-      _logger.i('Streaming link retrieved: \$result');
+      _logger.i('Streaming link retrieved: $result');
       return result;
     } catch (e, st) {
-      _logger.e('Error fetching stream for tmdbId: \$tmdbId',
+      _logger.e('Error fetching stream for tmdbId: $tmdbId',
           error: e, stackTrace: st);
       rethrow;
     }
