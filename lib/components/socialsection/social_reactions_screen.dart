@@ -165,15 +165,39 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
   Future<void> _initializeData() async {
     try {
       await Future.wait([
-        _checkMovieAccount(),
-        _loadLocalData(),
-        _loadFeedPostsFromLocal(),
-        _loadUsers(),
-        _loadUserData(),
+        _checkMovieAccount()
+            .catchError((e) => debugPrint('Check movie account error: $e')),
+        _loadLocalData()
+            .catchError((e) => debugPrint('Load local data error: $e')),
+        _loadFeedPostsFromLocal()
+            .catchError((e) => debugPrint('Load feed posts error: $e')),
+        _loadUsers().catchError((e) => debugPrint('Load users error: $e')),
+        _loadUserData()
+            .catchError((e) => debugPrint('Load user data error: $e')),
       ]);
-      RealtimeFeedService.instance.updateFeedPosts(
-        _feedPosts.map((e) => Map<String, String>.from(e)).toList(),
-      );
+
+      final sanitized = _feedPosts.map((post) {
+        return post.map((key, value) {
+          if (key == 'likedBy') {
+            return MapEntry(
+                key,
+                value is List
+                    ? value.map((e) => e.toString()).toList()
+                    : <String>[]);
+          } else if (value is List) {
+            return MapEntry(key, value.map((e) => e.toString()).toList());
+          } else {
+            return MapEntry(key, value?.toString() ?? '');
+          }
+        });
+      }).toList();
+
+      RealtimeFeedService.instance.updateFeedPosts(sanitized);
+      if (mounted) {
+        setState(() {
+          _feedPosts = sanitized;
+        });
+      }
     } catch (e) {
       debugPrint('Error initializing data: $e');
     }
@@ -216,10 +240,22 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
     try {
       final prefs = await SharedPreferences.getInstance();
       final feedPostsString = prefs.getString('feedPosts') ?? '[]';
-      _feedPosts = List<Map<String, dynamic>>.from(jsonDecode(feedPostsString));
+      final decoded = jsonDecode(feedPostsString);
+      if (decoded is List) {
+        _feedPosts = decoded.map((post) {
+          if (post is Map) {
+            return Map<String, dynamic>.from(post);
+          }
+          return <String, dynamic>{};
+        }).toList();
+      } else {
+        _feedPosts = [];
+      }
       if (mounted) setState(() {});
     } catch (e) {
       debugPrint('Error loading feed posts: $e');
+      _feedPosts = [];
+      if (mounted) setState(() {});
     }
   }
 
@@ -272,6 +308,7 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
   Future<void> _loadUsers() async {
     try {
       final rawUsers = await AuthDatabase.instance.getUsers();
+      debugPrint('Raw users: $rawUsers'); // Log raw data for inspection
       _users = rawUsers
           .map((u) => _normalizeUserData(Map<String, dynamic>.from(u)))
           .toList();
@@ -283,19 +320,39 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
 
   Map<String, dynamic> _normalizeUserData(Map<String, dynamic> user) {
     return {
-      'id': user['id']?.toString() ?? '',
-      'username': user['username']?.toString() ?? 'Unknown',
-      'email': user['email']?.toString() ?? '',
-      'bio': user['bio']?.toString() ?? '',
-      'password': user['password']?.toString() ?? '',
-      'auth_provider': user['auth_provider']?.toString() ?? '',
-      'token': user['token']?.toString() ?? '',
-      'created_at': user['created_at']?.toString() ?? '',
-      'updated_at':
-          user['updated_at']?.toString() ?? DateTime.now().toIso8601String(),
-      'followers_count': user['followers_count']?.toString() ?? '0',
-      'following_count': user['following_count']?.toString() ?? '0',
-      'avatar': user['avatar']?.toString() ?? 'https://via.placeholder.com/200',
+      'id': user['id'] is String ? user['id'] : user['id']?.toString() ?? '',
+      'username': user['username'] is String
+          ? user['username']
+          : user['username']?.toString() ?? 'Unknown',
+      'email': user['email'] is String
+          ? user['email']
+          : user['email']?.toString() ?? '',
+      'bio':
+          user['bio'] is String ? user['bio'] : user['bio']?.toString() ?? '',
+      'password': user['password'] is String
+          ? user['password']
+          : user['password']?.toString() ?? '',
+      'auth_provider': user['auth_provider'] is String
+          ? user['auth_provider']
+          : user['auth_provider']?.toString() ?? '',
+      'token': user['token'] is String
+          ? user['token']
+          : user['token']?.toString() ?? '',
+      'created_at': user['created_at'] is String
+          ? user['created_at']
+          : user['created_at']?.toString() ?? '',
+      'updated_at': user['updated_at'] is String
+          ? user['updated_at']
+          : user['updated_at']?.toString() ?? DateTime.now().toIso8601String(),
+      'followers_count': user['followers_count'] is String
+          ? user['followers_count']
+          : user['followers_count']?.toString() ?? '0',
+      'following_count': user['following_count'] is String
+          ? user['following_count']
+          : user['following_count']?.toString() ?? '0',
+      'avatar': user['avatar'] is String
+          ? user['avatar']
+          : user['avatar']?.toString() ?? 'https://via.placeholder.com/200',
     };
   }
 
@@ -786,7 +843,9 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
                   'user': data['user']?.toString() ?? 'Unknown',
                   'post': data['post']?.toString() ?? '',
                   'type': data['type']?.toString() ?? '',
-                  'likedBy': List<String>.from(data['likedBy'] ?? []),
+                  'likedBy': data['likedBy'] is List
+                      ? List<String>.from(data['likedBy'] ?? [])
+                      : [],
                   'title': data['title']?.toString() ?? '',
                   'season': data['season']?.toString() ?? '',
                   'episode': data['episode']?.toString() ?? '',
@@ -806,8 +865,15 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
                 padding:
                     const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 itemCount: posts.length,
-                itemBuilder: (context, index) =>
-                    _buildPostCard(posts[index], posts),
+                itemBuilder: (context, index) {
+                  try {
+                    return _buildPostCard(posts[index], posts);
+                  } catch (e) {
+                    debugPrint('Error building post card at index $index: $e');
+                    debugPrint('Post data: ${posts[index]}');
+                    return const SizedBox.shrink();
+                  }
+                },
               );
             },
           ),
