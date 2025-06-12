@@ -68,17 +68,17 @@ class MainVideoPlayerState extends State<MainVideoPlayer>
 
   List<Subtitle> _subtitles = [];
   String _currentSubtitle = "";
-  final List<String> _qualities = ["480p", "720p", "1080p"];
-  String _selectedQuality = "1080p";
+  final List<String> _qualities = ["Auto", "480p", "720p", "1080p"];
+  String _selectedQuality = "Auto";
 
   Color _controlColor = Colors.white;
-  double _iconSize = 44;
+  double _iconSize = 30;
   final Map<String, double> _iconSizePresets = {
     'Small': 30,
     'Medium': 44,
     'Large': 63,
   };
-  String _iconSizeKey = 'Medium';
+  String _iconSizeKey = 'Small';
 
   String _currentVideoPath = "";
   String _title = "";
@@ -189,10 +189,34 @@ class MainVideoPlayerState extends State<MainVideoPlayer>
       }
     } catch (error) {
       if (mounted) {
-        setState(() {
-          _errorMessage = "Failed to load video: $error";
-        });
+        if (_selectedQuality == "Auto") {
+          _selectedQuality = "1080p";
+          await _fetchNewQualityStream("1080p");
+        } else {
+          final nextQuality = _getNextLowerQuality(_selectedQuality);
+          if (nextQuality != null) {
+            setState(() {
+              _selectedQuality = nextQuality;
+            });
+            await _fetchNewQualityStream(nextQuality);
+          } else {
+            setState(() {
+              _errorMessage = "Failed to load video: $error";
+            });
+          }
+        }
       }
+    }
+  }
+
+  String? _getNextLowerQuality(String currentQuality) {
+    switch (currentQuality) {
+      case "1080p":
+        return "720p";
+      case "720p":
+        return "480p";
+      default:
+        return null;
     }
   }
 
@@ -461,7 +485,7 @@ class MainVideoPlayerState extends State<MainVideoPlayer>
         tmdbId: widget.title.hashCode.toString(),
         title: widget.title,
         releaseYear: widget.releaseYear,
-        resolution: quality,
+        resolution: quality == "Auto" ? "auto" : quality,
         enableSubtitles: _showSubtitles,
       );
       final newUrl = streamingInfo['url'] ?? _currentVideoPath;
@@ -655,7 +679,7 @@ class MainVideoPlayerState extends State<MainVideoPlayer>
         title: recommendation['title']?.toString() ??
             recommendation['name']?.toString() ??
             'Untitled',
-        releaseYear: releaseYear, // Extracted releaseYear
+        releaseYear: releaseYear,
         resolution: _selectedQuality,
         enableSubtitles: _showSubtitles,
       );
@@ -723,7 +747,7 @@ class MainVideoPlayerState extends State<MainVideoPlayer>
     final newWidget = MainVideoPlayer(
       videoPath: videoPath,
       title: title,
-      releaseYear: widget.releaseYear, // Use current widget's releaseYear
+      releaseYear: widget.releaseYear,
       isFullSeason: widget.isFullSeason,
       episodeFiles: widget.episodeFiles,
       similarMovies: widget.similarMovies,
@@ -788,6 +812,7 @@ class MainVideoPlayerState extends State<MainVideoPlayer>
               ),
               child: SafeArea(
                 child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     IconButton(
                       icon: Icon(Icons.arrow_back,
@@ -807,41 +832,45 @@ class MainVideoPlayerState extends State<MainVideoPlayer>
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                    IconButton(
-                      icon: Icon(Icons.high_quality,
-                          color: _controlColor, size: _iconSize),
-                      onPressed: _showQualityMenu,
+                    Row(
+                      children: [
+                        IconButton(
+                          icon: Icon(Icons.high_quality,
+                              color: _controlColor, size: _iconSize),
+                          onPressed: _showQualityMenu,
+                        ),
+                        IconButton(
+                          icon: Icon(Icons.speed,
+                              color: _controlColor, size: _iconSize),
+                          onPressed: _showSpeedMenu,
+                        ),
+                        IconButton(
+                          icon: Icon(Icons.settings,
+                              color: _controlColor, size: _iconSize),
+                          onPressed: _showSettingsMenu,
+                        ),
+                        IconButton(
+                          icon: Icon(
+                            _showSubtitles
+                                ? Icons.closed_caption
+                                : Icons.closed_caption_off,
+                            color: _controlColor,
+                            size: _iconSize,
+                          ),
+                          onPressed: () {
+                            setState(() {
+                              _showSubtitles = !_showSubtitles;
+                            });
+                          },
+                        ),
+                        if (widget.isFullSeason)
+                          IconButton(
+                            icon: Icon(Icons.list,
+                                color: _controlColor, size: _iconSize),
+                            onPressed: _showEpisodeMenu,
+                          ),
+                      ],
                     ),
-                    IconButton(
-                      icon: Icon(Icons.speed,
-                          color: _controlColor, size: _iconSize),
-                      onPressed: _showSpeedMenu,
-                    ),
-                    IconButton(
-                      icon: Icon(Icons.settings,
-                          color: _controlColor, size: _iconSize),
-                      onPressed: _showSettingsMenu,
-                    ),
-                    IconButton(
-                      icon: Icon(
-                        _showSubtitles
-                            ? Icons.closed_caption
-                            : Icons.closed_caption_off,
-                        color: _controlColor,
-                        size: _iconSize,
-                      ),
-                      onPressed: () {
-                        setState(() {
-                          _showSubtitles = !_showSubtitles;
-                        });
-                      },
-                    ),
-                    if (widget.isFullSeason)
-                      IconButton(
-                        icon: Icon(Icons.list,
-                            color: _controlColor, size: _iconSize),
-                        onPressed: _showEpisodeMenu,
-                      ),
                   ],
                 ),
               ),
@@ -869,7 +898,7 @@ class MainVideoPlayerState extends State<MainVideoPlayer>
             ),
           Center(
             child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
                 IconButton(
                   iconSize: _iconSize,
@@ -881,7 +910,6 @@ class MainVideoPlayerState extends State<MainVideoPlayer>
                         newPos > Duration.zero ? newPos : Duration.zero);
                   },
                 ),
-                const SizedBox(width: 20),
                 IconButton(
                   iconSize: _iconSize + 24,
                   icon: Icon(
@@ -901,7 +929,6 @@ class MainVideoPlayerState extends State<MainVideoPlayer>
                     });
                   },
                 ),
-                const SizedBox(width: 20),
                 IconButton(
                   iconSize: _iconSize,
                   icon: Icon(Icons.forward_10, color: _controlColor),
@@ -1007,10 +1034,6 @@ class MainVideoPlayerState extends State<MainVideoPlayer>
                             style:
                                 TextStyle(color: _controlColor, fontSize: 14)),
                         const Spacer(),
-                        Text(_formatDuration(_controller.value.duration),
-                            style:
-                                TextStyle(color: _controlColor, fontSize: 14)),
-                        const SizedBox(width: 16),
                         IconButton(
                           icon: Icon(
                               _isMuted ? Icons.volume_off : Icons.volume_up,
@@ -1068,6 +1091,10 @@ class MainVideoPlayerState extends State<MainVideoPlayer>
                             }
                           },
                         ),
+                        const SizedBox(width: 8),
+                        Text(_formatDuration(_controller.value.duration),
+                            style:
+                                TextStyle(color: _controlColor, fontSize: 14)),
                       ],
                     ),
                   ],
@@ -1210,3 +1237,4 @@ class MainVideoPlayerState extends State<MainVideoPlayer>
     );
   }
 }
+
