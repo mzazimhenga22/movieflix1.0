@@ -40,8 +40,10 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
   @override
   void initState() {
     super.initState();
-    _isTvShow = (widget.movie['media_type']?.toString().toLowerCase() == 'tv') ||
-        (widget.movie['seasons'] != null && (widget.movie['seasons'] as List).isNotEmpty);
+    _isTvShow =
+        (widget.movie['media_type']?.toString().toLowerCase() == 'tv') ||
+            (widget.movie['seasons'] != null &&
+                (widget.movie['seasons'] as List).isNotEmpty);
     if (_isTvShow) {
       _tvDetailsFuture = tmdb.TMDBApi.fetchTVShowDetails(widget.movie['id']);
     }
@@ -65,7 +67,8 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
   Future<void> _fetchSimilarMovies() async {
     try {
       final similar = await tmdb.TMDBApi.fetchSimilarMovies(widget.movie['id']);
-      if (mounted) setState(() => _similarMovies = similar.cast<Map<String, dynamic>>());
+      if (mounted)
+        setState(() => _similarMovies = similar.cast<Map<String, dynamic>>());
     } catch (e) {
       debugPrint('Failed to fetch similar movies: $e');
     }
@@ -78,8 +81,10 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
 
   void _shareMovie(Map<String, dynamic> details) {
     const subject = 'Recommendation';
-    final message = "Check out ${details['title'] ?? details['name']}!\n\n${details['synopsis'] ?? details['overview'] ?? ''}";
-    Share.share(message, subject: details['title'] ?? details['name'] ?? subject);
+    final message =
+        "Check out ${details['title'] ?? details['name']}!\n\n${details['synopsis'] ?? details['overview'] ?? ''}";
+    Share.share(message,
+        subject: details['title'] ?? details['name'] ?? subject);
   }
 
   Future<void> _addToMyList(Map<String, dynamic> details) async {
@@ -87,12 +92,15 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
     final myList = prefs.getStringList('myList') ?? [];
     final movieId = details['id'].toString();
 
-    if (!myList.any((jsonStr) => (json.decode(jsonStr))['id'].toString() == movieId)) {
+    if (!myList
+        .any((jsonStr) => (json.decode(jsonStr))['id'].toString() == movieId)) {
       myList.add(json.encode(details));
       await prefs.setStringList('myList', myList);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${details['title'] ?? details['name']} added to My List.')),
+        SnackBar(
+            content: Text(
+                '${details['title'] ?? details['name']} added to My List.')),
       );
       Navigator.pushReplacement(
         context,
@@ -101,7 +109,9 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
     } else {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${details['title'] ?? details['name']} is already in My List.')),
+        SnackBar(
+            content: Text(
+                '${details['title'] ?? details['name']} is already in My List.')),
       );
     }
   }
@@ -119,7 +129,8 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
           initialResolution: downloadResolution,
           initialSubtitles: downloadSubtitles,
           onConfirm: (resolution, subtitles) {
-            _downloadMovie(details, resolution: resolution, subtitles: subtitles);
+            _downloadMovie(details,
+                resolution: resolution, subtitles: subtitles);
           },
         );
       },
@@ -132,7 +143,9 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
     required bool subtitles,
   }) async {
     final tmdbId = details['id']?.toString() ?? '';
-    final title = details['title']?.toString() ?? details['name']?.toString() ?? 'Untitled';
+    final title = details['title']?.toString() ??
+        details['name']?.toString() ??
+        'Untitled';
     Map<String, String> streamingInfo;
     try {
       streamingInfo = await StreamingService.getStreamingLink(
@@ -145,7 +158,8 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Unable to start download. Please try again later.")),
+        const SnackBar(
+            content: Text("Unable to start download. Please try again later.")),
       );
       return;
     }
@@ -165,7 +179,8 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
       final directory = Platform.isAndroid
           ? (await getExternalStorageDirectory())!
           : await getApplicationDocumentsDirectory();
-      final fileName = "${details['title'] ?? details['name']}-$resolution.${urlType == 'm3u8' ? 'mp4' : 'mp4'}";
+      final fileName =
+          "${details['title'] ?? details['name']}-$resolution.${urlType == 'm3u8' ? 'mp4' : 'mp4'}";
       final taskId = await FlutterDownloader.enqueue(
         url: downloadUrl,
         savedDir: directory.path,
@@ -222,7 +237,8 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
               _selectedResolution = resolution;
               _enableSubtitles = subtitles;
             });
-            await _launchStreamingPlayer(details, isTvShow, resolution, subtitles);
+            await _launchStreamingPlayer(
+                details, isTvShow, resolution, subtitles);
           },
         );
       },
@@ -245,7 +261,9 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
         final seasons = details['seasons'] as List<dynamic>?;
         if (seasons != null && seasons.isNotEmpty) {
           final selectedSeason = seasons.firstWhere(
-            (season) => season['episodes'] != null && (season['episodes'] as List).isNotEmpty,
+            (season) =>
+                season['episodes'] != null &&
+                (season['episodes'] as List).isNotEmpty,
             orElse: () => throw Exception('No episodes available'),
           );
           final episodes = selectedSeason['episodes'] as List<dynamic>;
@@ -255,7 +273,9 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
 
           streamingInfo = await StreamingService.getStreamingLink(
             tmdbId: details['id']?.toString() ?? 'Unknown Show',
-            title: details['name']?.toString() ?? details['title']?.toString() ?? 'Unknown Show',
+            title: details['name']?.toString() ??
+                details['title']?.toString() ??
+                'Unknown Show',
             releaseYear: _releaseYear ?? 1970,
             season: seasonNumber,
             episode: episodeNumber,
@@ -269,7 +289,9 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
       } else {
         streamingInfo = await StreamingService.getStreamingLink(
           tmdbId: details['id']?.toString() ?? 'Unknown Movie',
-          title: details['title']?.toString() ?? details['name']?.toString() ?? 'Unknown Movie',
+          title: details['title']?.toString() ??
+              details['name']?.toString() ??
+              'Unknown Movie',
           releaseYear: _releaseYear ?? 1970,
           resolution: resolution,
           enableSubtitles: subtitles,
@@ -279,7 +301,9 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
       if (mounted) {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Unable to start streaming. Please try again later.")),
+          const SnackBar(
+              content:
+                  Text("Unable to start streaming. Please try again later.")),
         );
       }
       return;
@@ -311,7 +335,10 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
         MaterialPageRoute(
           builder: (context) => MainVideoPlayer(
             videoPath: streamUrl,
-            title: streamingInfo['title'] ?? details['title'] ?? details['name'] ?? 'Untitled',
+            title: streamingInfo['title'] ??
+                details['title'] ??
+                details['name'] ??
+                'Untitled',
             releaseYear: _releaseYear ?? 1970,
             isFullSeason: isTvShow,
             episodeFiles: episodeFiles,
@@ -333,7 +360,8 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
     );
   }
 
-  List<Widget> _buildDetailsContent(Map<String, dynamic> details, bool isTvShow, bool isLoading) {
+  List<Widget> _buildDetailsContent(
+      Map<String, dynamic> details, bool isTvShow, bool isLoading) {
     final dateLabel = isTvShow ? 'First Air Date' : 'Release Date';
     final title = isTvShow
         ? (details['name'] ?? details['title'] ?? 'No Title')
@@ -347,7 +375,8 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         child: Text(
           title,
-          style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: Colors.white),
+          style: const TextStyle(
+              fontSize: 32, fontWeight: FontWeight.bold, color: Colors.white),
         ),
       ),
       Padding(
@@ -386,7 +415,8 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
             spacing: 8,
             children: (details['tags'] as List)
                 .map((tag) => Chip(
-                      label: Text(tag.toString(), style: const TextStyle(color: Colors.white)),
+                      label: Text(tag.toString(),
+                          style: const TextStyle(color: Colors.white)),
                       backgroundColor: Colors.grey[800],
                     ))
                 .toList(),
@@ -405,7 +435,8 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
             ),
           ),
         )
-      else if (details['rating'] != null && details['rating'].toString().isNotEmpty)
+      else if (details['rating'] != null &&
+          details['rating'].toString().isNotEmpty)
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
           child: Text(
@@ -433,7 +464,9 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
                 ),
               )
             : Text(
-                details['synopsis'] ?? details['overview'] ?? 'No overview available.',
+                details['synopsis'] ??
+                    details['overview'] ??
+                    'No overview available.',
                 style: const TextStyle(fontSize: 16, color: Colors.white),
               ),
       ),
@@ -488,7 +521,8 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
                     .asMap()
                     .entries
                     .map((entry) => Chip(
-                          label: Text(entry.value.toString(), style: const TextStyle(color: Colors.white)),
+                          label: Text(entry.value.toString(),
+                              style: const TextStyle(color: Colors.white)),
                           backgroundColor: entry.key % 3 == 0
                               ? Colors.red[800]
                               : entry.key % 3 == 1
@@ -552,7 +586,9 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
           key: ValueKey('tv_${details['id']}'),
           tvId: details['id'],
           seasons: details['seasons'] ?? [],
-          tvShowName: details['name']?.toString() ?? details['title']?.toString() ?? 'Unknown Show',
+          tvShowName: details['name']?.toString() ??
+              details['title']?.toString() ??
+              'Unknown Show',
         ),
       const _SectionTitle(title: 'Trailers'),
       VisibilityDetector(
@@ -575,7 +611,8 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
   }
 
   Widget _buildDetailScreen(Map<String, dynamic> details) {
-    final posterUrl = 'https://image.tmdb.org/t/p/w500${details['poster'] ?? details['poster_path'] ?? ''}';
+    final posterUrl =
+        'https://image.tmdb.org/t/p/w500${details['poster'] ?? details['poster_path'] ?? ''}';
     final settings = Provider.of<SettingsProvider>(context);
 
     return Scaffold(
@@ -601,7 +638,8 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
                           highlightColor: Colors.grey[600]!,
                           child: Container(color: Colors.grey[800]),
                         ),
-                        errorWidget: (context, url, error) => Container(color: Colors.grey),
+                        errorWidget: (context, url, error) =>
+                            Container(color: Colors.grey),
                       ),
                       Container(
                         decoration: BoxDecoration(
@@ -619,7 +657,8 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
                       ),
                       Center(
                         child: _PlayButton(
-                          onPressed: () => _showPlayOptionsModal(details, _isTvShow),
+                          onPressed: () =>
+                              _showPlayOptionsModal(details, _isTvShow),
                           accentColor: settings.accentColor,
                         ),
                       ),
@@ -634,7 +673,9 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
                   ),
                 ),
               ),
-              SliverList(delegate: SliverChildListDelegate(_buildDetailsContent(details, _isTvShow, false))),
+              SliverList(
+                  delegate: SliverChildListDelegate(
+                      _buildDetailsContent(details, _isTvShow, false))),
             ],
           ),
         ],
@@ -650,9 +691,10 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
           return FutureBuilder<Map<String, dynamic>>(
             future: _tvDetailsFuture,
             builder: (context, snapshot) {
-              final details = snapshot.connectionState == ConnectionState.waiting
-                  ? widget.movie
-                  : {...widget.movie, ...snapshot.data!};
+              final details =
+                  snapshot.connectionState == ConnectionState.waiting
+                      ? widget.movie
+                      : {...widget.movie, ...snapshot.data!};
               if (snapshot.hasError) {
                 return Scaffold(
                   backgroundColor: Colors.black,
@@ -685,7 +727,8 @@ class _SectionTitle extends StatelessWidget {
       padding: const EdgeInsets.all(16),
       child: Text(
         title,
-        style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white),
+        style: const TextStyle(
+            fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white),
       ),
     );
   }
@@ -877,24 +920,33 @@ class _DownloadOptionsModalState extends State<_DownloadOptionsModal> {
         children: [
           const Text(
             "Download Options",
-            style: TextStyle(fontSize: 20, color: Colors.white, fontWeight: FontWeight.bold),
+            style: TextStyle(
+                fontSize: 20, color: Colors.white, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 16),
-          const Text("Select Resolution:", style: TextStyle(color: Colors.white)),
+          const Text("Select Resolution:",
+              style: TextStyle(color: Colors.white)),
           DropdownButton<String>(
             value: _resolution,
             dropdownColor: Colors.black87,
             items: const [
-              DropdownMenuItem(value: "480p", child: Text("480p", style: TextStyle(color: Colors.white))),
-              DropdownMenuItem(value: "720p", child: Text("720p", style: TextStyle(color: Colors.white))),
-              DropdownMenuItem(value: "1080p", child: Text("1080p", style: TextStyle(color: Colors.white))),
+              DropdownMenuItem(
+                  value: "480p",
+                  child: Text("480p", style: TextStyle(color: Colors.white))),
+              DropdownMenuItem(
+                  value: "720p",
+                  child: Text("720p", style: TextStyle(color: Colors.white))),
+              DropdownMenuItem(
+                  value: "1080p",
+                  child: Text("1080p", style: TextStyle(color: Colors.white))),
             ],
             onChanged: (value) => setState(() => _resolution = value!),
           ),
           const SizedBox(height: 16),
           Row(
             children: [
-              const Text("Enable Subtitles:", style: TextStyle(color: Colors.white)),
+              const Text("Enable Subtitles:",
+                  style: TextStyle(color: Colors.white)),
               Switch(
                 value: _subtitles,
                 activeColor: settings.accentColor,
@@ -905,12 +957,14 @@ class _DownloadOptionsModalState extends State<_DownloadOptionsModal> {
           const Spacer(),
           Center(
             child: ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: settings.accentColor),
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: settings.accentColor),
               onPressed: () {
                 Navigator.pop(context);
                 widget.onConfirm(_resolution, _subtitles);
               },
-              child: const Text("Start Download", style: TextStyle(color: Colors.black)),
+              child: const Text("Start Download",
+                  style: TextStyle(color: Colors.black)),
             ),
           ),
         ],
@@ -962,25 +1016,36 @@ class _PlayOptionsModalState extends State<_PlayOptionsModal> {
           const Center(
             child: Text(
               "Play Options",
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
+              style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white),
             ),
           ),
           const SizedBox(height: 16),
-          const Text("Select Resolution:", style: TextStyle(fontSize: 16, color: Colors.white)),
+          const Text("Select Resolution:",
+              style: TextStyle(fontSize: 16, color: Colors.white)),
           DropdownButton<String>(
             value: _resolution,
             dropdownColor: Colors.black87,
             items: const [
-              DropdownMenuItem(value: "480p", child: Text("480p", style: TextStyle(color: Colors.white))),
-              DropdownMenuItem(value: "720p", child: Text("720p", style: TextStyle(color: Colors.white))),
-              DropdownMenuItem(value: "1080p", child: Text("1080p", style: TextStyle(color: Colors.white))),
+              DropdownMenuItem(
+                  value: "480p",
+                  child: Text("480p", style: TextStyle(color: Colors.white))),
+              DropdownMenuItem(
+                  value: "720p",
+                  child: Text("720p", style: TextStyle(color: Colors.white))),
+              DropdownMenuItem(
+                  value: "1080p",
+                  child: Text("1080p", style: TextStyle(color: Colors.white))),
             ],
             onChanged: (value) => setState(() => _resolution = value!),
           ),
           const SizedBox(height: 16),
           Row(
             children: [
-              const Text("Enable Subtitles:", style: TextStyle(fontSize: 16, color: Colors.white)),
+              const Text("Enable Subtitles:",
+                  style: TextStyle(fontSize: 16, color: Colors.white)),
               Switch(
                 value: _subtitles,
                 activeColor: settings.accentColor,
@@ -991,12 +1056,14 @@ class _PlayOptionsModalState extends State<_PlayOptionsModal> {
           const Spacer(),
           Center(
             child: ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: settings.accentColor),
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: settings.accentColor),
               onPressed: () {
                 Navigator.pop(context);
                 widget.onConfirm(_resolution, _subtitles);
               },
-              child: const Text("Play Now", style: TextStyle(color: Colors.black)),
+              child:
+                  const Text("Play Now", style: TextStyle(color: Colors.black)),
             ),
           ),
           const SizedBox(height: 16),
@@ -1053,7 +1120,8 @@ class _RatingDialogState extends State<_RatingDialog> {
           child: const Text("Cancel"),
         ),
         ElevatedButton(
-          style: ElevatedButton.styleFrom(backgroundColor: settings.accentColor),
+          style:
+              ElevatedButton.styleFrom(backgroundColor: settings.accentColor),
           onPressed: widget.onSubmit,
           child: const Text("Submit", style: TextStyle(color: Colors.black)),
         ),
@@ -1154,7 +1222,8 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
   Future<void> _fetchTVShowDetails() async {
     try {
       final tvDetails = await tmdb.TMDBApi.fetchTVShowDetails(widget.tvId);
-      final firstAirDate = tvDetails['first_air_date'] as String? ?? '1970-01-01';
+      final firstAirDate =
+          tvDetails['first_air_date'] as String? ?? '1970-01-01';
       if (mounted) {
         setState(() {
           _releaseYear = int.parse(firstAirDate.split('-')[0]);
@@ -1179,7 +1248,8 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
     if (_episodesCache[seasonNumber] != null || _isLoading) return;
     setState(() => _isLoading = true);
     try {
-      final seasonDetails = await tmdb.TMDBApi.fetchTVSeasonDetails(widget.tvId, seasonNumber);
+      final seasonDetails =
+          await tmdb.TMDBApi.fetchTVSeasonDetails(widget.tvId, seasonNumber);
       if (!mounted) return;
       setState(() {
         _episodesCache[seasonNumber] = seasonDetails['episodes'] ?? [];
@@ -1192,7 +1262,8 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
         _isLoading = false;
       });
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Unable to load episodes. Please try again later.')),
+        const SnackBar(
+            content: Text('Unable to load episodes. Please try again later.')),
       );
     }
   }
@@ -1206,7 +1277,8 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
     );
   }
 
-  void _showEpisodePlayOptionsModal(Map<String, dynamic> episode, int seasonNumber) {
+  void _showEpisodePlayOptionsModal(
+      Map<String, dynamic> episode, int seasonNumber) {
     if (!mounted) return;
     showModalBottomSheet(
       context: context,
@@ -1221,14 +1293,17 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
             Navigator.pop(modalContext);
             _showLoadingDialog();
 
-            final episodeNumber = (episode['episode_number'] as num?)?.toInt() ?? 1;
+            final episodeNumber =
+                (episode['episode_number'] as num?)?.toInt() ?? 1;
             final episodeName = episode['name'] as String? ?? 'Untitled';
 
             Map<String, String> streamingInfo = {};
             try {
               streamingInfo = await StreamingService.getStreamingLink(
                 tmdbId: widget.tvId.toString(),
-                title: widget.tvShowName.isNotEmpty ? widget.tvShowName : episodeName,
+                title: widget.tvShowName.isNotEmpty
+                    ? widget.tvShowName
+                    : episodeName,
                 releaseYear: _releaseYear ?? 1970,
                 season: seasonNumber,
                 episode: episodeNumber,
@@ -1239,7 +1314,9 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
               if (mounted) {
                 Navigator.pop(context);
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text("Unable to start streaming. Please try again later.")),
+                  const SnackBar(
+                      content: Text(
+                          "Unable to start streaming. Please try again later.")),
                 );
               }
               return;
@@ -1258,7 +1335,8 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
             if (streamUrl.isEmpty) {
               if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text("Streaming unavailable at this time.")),
+                  const SnackBar(
+                      content: Text("Streaming unavailable at this time.")),
                 );
               }
               return;
@@ -1310,7 +1388,10 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
                   children: [
                     const Text(
                       'Episodes',
-                      style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white),
+                      style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white),
                     ),
                     const Spacer(),
                     DropdownButton<int>(
@@ -1322,7 +1403,8 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
                           .map<DropdownMenuItem<int>>(
                               (season) => DropdownMenuItem(
                                     value: season['season_number'] as int? ?? 0,
-                                    child: Text('Season ${season['season_number'] ?? 0}'),
+                                    child: Text(
+                                        'Season ${season['season_number'] ?? 0}'),
                                   ))
                           .toList(),
                       onChanged: (value) {
@@ -1339,7 +1421,9 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
               ),
               const SizedBox(height: 8),
               _isLoading
-                  ? Center(child: CircularProgressIndicator(color: settings.accentColor))
+                  ? Center(
+                      child: CircularProgressIndicator(
+                          color: settings.accentColor))
                   : _buildEpisodesList(),
             ],
           ),
@@ -1353,7 +1437,8 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
     if (episodes.isEmpty && !_isLoading) {
       return const Padding(
         padding: EdgeInsets.all(16),
-        child: Text('No episodes available.', style: TextStyle(color: Colors.white70)),
+        child: Text('No episodes available.',
+            style: TextStyle(color: Colors.white70)),
       );
     }
 
@@ -1366,7 +1451,8 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
         return _EpisodeCard(
           episode: episode,
           seasonNumber: _selectedSeasonNumber,
-          onTap: () => _showEpisodePlayOptionsModal(episode, _selectedSeasonNumber),
+          onTap: () =>
+              _showEpisodePlayOptionsModal(episode, _selectedSeasonNumber),
         );
       },
     );
@@ -1387,7 +1473,8 @@ class _EpisodeCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final settings = Provider.of<SettingsProvider>(context);
-    final episodeNumber = (episode['episode_number'] as num?)?.toString().padLeft(2, '0') ?? '01';
+    final episodeNumber =
+        (episode['episode_number'] as num?)?.toString().padLeft(2, '0') ?? '01';
     final episodeName = episode['name'] as String? ?? 'Untitled';
     final episodeOverview = episode['overview'] as String? ?? '';
     final stillPath = episode['still_path'] as String?;
@@ -1421,7 +1508,10 @@ class _EpisodeCard extends StatelessWidget {
                           placeholder: (context, url) => Shimmer.fromColors(
                             baseColor: Colors.grey[800]!,
                             highlightColor: Colors.grey[600]!,
-                            child: Container(width: 120, height: 70, color: Colors.grey[800]),
+                            child: Container(
+                                width: 120,
+                                height: 70,
+                                color: Colors.grey[800]),
                           ),
                           errorWidget: (context, url, error) => Container(
                             width: 120,
@@ -1444,14 +1534,18 @@ class _EpisodeCard extends StatelessWidget {
                     children: [
                       Text(
                         'Episode $episodeNumber: $episodeName',
-                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+                        style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
                       const SizedBox(height: 4),
                       Text(
                         episodeOverview,
-                        style: const TextStyle(fontSize: 14, color: Colors.white70),
+                        style: const TextStyle(
+                            fontSize: 14, color: Colors.white70),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -1460,7 +1554,8 @@ class _EpisodeCard extends StatelessWidget {
                           padding: const EdgeInsets.only(top: 4),
                           child: Text(
                             '${runtime}m',
-                            style: const TextStyle(fontSize: 14, color: Colors.white60),
+                            style: const TextStyle(
+                                fontSize: 14, color: Colors.white60),
                           ),
                         ),
                     ],
@@ -1481,7 +1576,8 @@ class _EpisodePlayOptionsModal extends StatefulWidget {
   const _EpisodePlayOptionsModal({required this.onConfirm});
 
   @override
-  _EpisodePlayOptionsModalState createState() => _EpisodePlayOptionsModalState();
+  _EpisodePlayOptionsModalState createState() =>
+      _EpisodePlayOptionsModalState();
 }
 
 class _EpisodePlayOptionsModalState extends State<_EpisodePlayOptionsModal> {
@@ -1505,26 +1601,37 @@ class _EpisodePlayOptionsModalState extends State<_EpisodePlayOptionsModal> {
           const Center(
             child: Text(
               "Play Options",
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
+              style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white),
             ),
           ),
           const SizedBox(height: 16),
-          const Text("Select Resolution:", style: TextStyle(fontSize: 16, color: Colors.white)),
+          const Text("Select Resolution:",
+              style: TextStyle(fontSize: 16, color: Colors.white)),
           DropdownButton<String>(
             value: _resolution,
             dropdownColor: Colors.black87,
             iconEnabledColor: settings.accentColor,
             items: const [
-              DropdownMenuItem(value: "480p", child: Text("480p", style: TextStyle(color: Colors.white))),
-              DropdownMenuItem(value: "720p", child: Text("720p", style: TextStyle(color: Colors.white))),
-              DropdownMenuItem(value: "1080p", child: Text("1080p", style: TextStyle(color: Colors.white))),
+              DropdownMenuItem(
+                  value: "480p",
+                  child: Text("480p", style: TextStyle(color: Colors.white))),
+              DropdownMenuItem(
+                  value: "720p",
+                  child: Text("720p", style: TextStyle(color: Colors.white))),
+              DropdownMenuItem(
+                  value: "1080p",
+                  child: Text("1080p", style: TextStyle(color: Colors.white))),
             ],
             onChanged: (value) => setState(() => _resolution = value!),
           ),
           const SizedBox(height: 16),
           Row(
             children: [
-              const Text("Enable Subtitles:", style: TextStyle(fontSize: 16, color: Colors.white)),
+              const Text("Enable Subtitles:",
+                  style: TextStyle(fontSize: 16, color: Colors.white)),
               Switch(
                 value: _subtitles,
                 activeColor: settings.accentColor,
@@ -1535,9 +1642,11 @@ class _EpisodePlayOptionsModalState extends State<_EpisodePlayOptionsModal> {
           const Spacer(),
           Center(
             child: ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: settings.accentColor),
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: settings.accentColor),
               onPressed: () => widget.onConfirm(_resolution, _subtitles),
-              child: const Text("Play Now", style: TextStyle(color: Colors.black)),
+              child:
+                  const Text("Play Now", style: TextStyle(color: Colors.black)),
             ),
           ),
           const SizedBox(height: 16),
@@ -1603,3 +1712,4 @@ class EpisodeLoadingDialogState extends State<EpisodeLoadingDialog> {
     );
   }
 }
+
