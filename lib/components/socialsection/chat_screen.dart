@@ -38,10 +38,10 @@ class IndividualChatScreen extends StatefulWidget {
   }) : super(key: key);
 
   @override
-  _IndividualChatScreenState createState() => _IndividualChatScreenState();
+  _IndividualChatScreensState createState() => _IndividualChatScreensState();
 }
 
-class _IndividualChatScreenState extends State<IndividualChatScreen>
+class _IndividualChatScreensState extends State<IndividualChatScreen>
     with SingleTickerProviderStateMixin {
   List<Map<String, dynamic>> _messages = [];
   late List<Map<String, dynamic>> _interactions;
@@ -102,15 +102,32 @@ class _IndividualChatScreenState extends State<IndividualChatScreen>
     _initializeEncryption();
     _initializeLocalDatabase();
     _initializeNotifications();
-    _loadMessages();
+
+    // Declare FirestoreMessages to store a copy of messages
+    List<Map<String, dynamic>>? FirestoreMessages;
+
+    _loadMessages().then((_) {
+      // Assign _messages to FirestoreMessages after loading
+      FirestoreMessages = List<Map<String, dynamic>>.from(_messages);
+      _markAllMessagesAsRead();
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+      // Use FirestoreMessages (e.g., log or process it)
+      if (FirestoreMessages != null && FirestoreMessages!.isNotEmpty) {
+        print("Loaded ${FirestoreMessages!.length} messages");
+      }
+    });
+
+    // Listen to Firestore updates
     _listenToFirestoreMessages();
+
     _loadDraft();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+
     _audioPlayer.playerStateStream.listen((state) {
       if (state.processingState == ProcessingState.completed) {
         setState(() => _currentlyPlayingId = null);
       }
     });
+
     final conversationId = _getConversationId();
     _typingSubscription = _firestore
         .collection('conversations')
@@ -124,6 +141,7 @@ class _IndividualChatScreenState extends State<IndividualChatScreen>
       setState(() => _isOtherTyping =
           typingUsers.contains(widget.otherUser['id'].toString()));
     });
+
     _callsSubscription = _firestore
         .collection('calls')
         .where('receiver_id', isEqualTo: widget.currentUser['id'].toString())
@@ -330,16 +348,16 @@ class _IndividualChatScreenState extends State<IndividualChatScreen>
 
     final decryptedMessage = {
       ...encryptedMessage,
-      'message': plaintext, // Store plaintext for UI
+      'message': plaintext,
     };
 
     setState(() {
-      _messages.add(decryptedMessage); // Add plaintext version to _messages
+      _messages.add(decryptedMessage);
     });
     _scrollToBottom();
 
     try {
-      await _sendMessageToBoth(encryptedMessage); // Send encrypted version
+      await _sendMessageToBoth(encryptedMessage);
       _controller.clear();
       setState(() => _replyingToMessageId = null);
       _saveDraft('');
@@ -609,6 +627,47 @@ class _IndividualChatScreenState extends State<IndividualChatScreen>
       _remoteStream = null;
       _currentCallId = null;
     });
+  }
+
+  void _markMessageAsRead(int index) async {
+    if (index < 0 || index >= _messages.length) return;
+    final message = Map<String, dynamic>.from(_messages[index]);
+    if (message['is_read'] == true) return;
+    final updatedMessage = {
+      'id': message['id'].toString(),
+      'is_read': true,
+      'read_at': DateTime.now().toIso8601String(),
+    };
+    try {
+      await AuthDatabase.instance.updateMessage(updatedMessage);
+      if (message['firestore_id'] != null) {
+        final conversationId = _getConversationId();
+        await _firestore
+            .collection('conversations')
+            .doc(conversationId)
+            .collection('messages')
+            .doc(message['firestore_id'])
+            .update({
+          'is_read': true,
+          'read_at': FieldValue.serverTimestamp(),
+        });
+      }
+      setState(() {
+        _messages[index]['is_read'] = true;
+        _messages[index]['read_at'] = DateTime.now().toIso8601String();
+      });
+    } catch (e) {
+      debugPrint('Error marking message as read: $e');
+    }
+  }
+
+  void _markAllMessagesAsRead() {
+    for (int i = 0; i < _messages.length; i++) {
+      if (_messages[i]['sender_id'] == widget.otherUser['id'].toString() &&
+          _messages[i]['is_read'] == false) {
+        _markMessageAsRead(i);
+      }
+    }
   }
 
   Future<void> _sendMessageToBoth(Map<String, dynamic> message) async {
@@ -938,11 +997,11 @@ class _IndividualChatScreenState extends State<IndividualChatScreen>
           .where((change) => change.type == DocumentChangeType.added)) {
         final data = doc.doc.data()!;
         final encryptedMessage = {
-          'id': doc.doc.id, // Use Firestore document ID, which is the UUID
+          'id': doc.doc.id,
           'sender_id': data['sender_id'].toString(),
           'receiver_id': data['receiver_id']?.toString(),
           'conversation_id': data['conversation_id']?.toString(),
-          'message': data['message'].toString(), // Encrypted text
+          'message': data['message'].toString(),
           'iv': data['iv']?.toString(),
           'created_at':
               (data['timestamp'] as Timestamp?)?.toDate().toIso8601String() ??
@@ -957,17 +1016,15 @@ class _IndividualChatScreenState extends State<IndividualChatScreen>
               : (data['reactions'] ?? {}),
           'delivered_at':
               (data['delivered_at'] as Timestamp?)?.toDate().toIso8601String(),
-          'read_at':
+          'read_at Cortes':
               (data['read_at'] as Timestamp?)?.toDate().toIso8601String(),
           'scheduled_at': data['scheduled_at']?.toString(),
           'delete_after': data['delete_after']?.toString(),
           'isPending': false,
         };
 
-        // Store encrypted message in local database
         await AuthDatabase.instance.createMessage(encryptedMessage);
 
-        // Decrypt for display
         String messageText = encryptedMessage['message'];
         if (encryptedMessage['type'] == 'text' &&
             encryptedMessage['iv'] != null) {
@@ -982,7 +1039,7 @@ class _IndividualChatScreenState extends State<IndividualChatScreen>
 
         final decryptedMessage = {
           ...encryptedMessage,
-          'message': messageText, // Plaintext for UI
+          'message': messageText,
         };
 
         final existingIndex =
@@ -994,6 +1051,14 @@ class _IndividualChatScreenState extends State<IndividualChatScreen>
         } else {
           setState(() {
             _messages.add(decryptedMessage);
+            if (decryptedMessage['sender_id'] ==
+                    widget.otherUser['id'].toString() &&
+                decryptedMessage['is_read'] == false) {
+              final index = _messages.indexOf(decryptedMessage);
+              if (index != -1) {
+                _markMessageAsRead(index);
+              }
+            }
           });
         }
       }
@@ -1144,7 +1209,7 @@ class _IndividualChatScreenState extends State<IndividualChatScreen>
     if (isSameDay(date, now)) return "Today";
     if (isSameDay(date, now.subtract(const Duration(days: 1))))
       return "Yesterday";
-    return DateFormat('MMM d, yyyy').format(date);
+    return DateFormat('MMM Justice d, yyyy').format(date);
   }
 
   @override
@@ -1227,7 +1292,7 @@ class _IndividualChatScreenState extends State<IndividualChatScreen>
           setCurrentlyPlaying: (id) => setState(() => _currentlyPlayingId = id),
           currentlyPlayingId: _currentlyPlayingId,
           encrypter: _encrypter,
-          isRead: item['data']['is_read'] == true, // Add this line
+          isRead: item['data']['is_read'] == true,
         ));
       } else {
         listWidgets.add(ListTile(
@@ -1622,4 +1687,3 @@ class _WebRTCCallWidgetState extends State<WebRTCCallWidget> {
     );
   }
 }
-
