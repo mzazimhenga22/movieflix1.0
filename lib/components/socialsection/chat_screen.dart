@@ -23,6 +23,7 @@ import 'package:sqflite/sqflite.dart';
 import 'dart:convert';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'chat_widgets.dart';
+import 'package:crypto/crypto.dart';
 
 class IndividualChatScreen extends StatefulWidget {
   final Map<String, dynamic> currentUser;
@@ -48,24 +49,20 @@ class _IndividualChatScreenState extends State<IndividualChatScreen>
   final ScrollController _scrollController = ScrollController();
   String? _replyingToMessageId;
 
-  // Chat background settings
   Color _chatBgColor = Colors.white;
   String? _chatBgImage;
   String? _cinematicTheme;
 
-  // Search settings
   String _searchTerm = "";
   bool _showSearch = false;
   final TextEditingController _searchController = TextEditingController();
 
-  // Audio recording
   FlutterSoundRecorder? _recorder;
   bool _isRecording = false;
   String? _audioPath;
   AnimationController? _animationController;
   Animation<double>? _pulseAnimation;
 
-  // WebRTC for calls
   RTCPeerConnection? _peerConnection;
   MediaStream? _localStream;
   MediaStream? _remoteStream;
@@ -76,27 +73,25 @@ class _IndividualChatScreenState extends State<IndividualChatScreen>
   bool _isInCall = false;
   bool _isVideoCall = false;
 
-  // Firestore and Supabase
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final SupabaseClient _supabase = Supabase.instance.client;
 
-  // Firestore subscriptions
   StreamSubscription<DocumentSnapshot>? _typingSubscription;
   StreamSubscription<QuerySnapshot>? _messagesSubscription;
 
-  // New state variables for features
   bool _showEmojiPicker = false;
   final AudioPlayer _audioPlayer = AudioPlayer();
   String? _currentlyPlayingId;
   Timer? _typingTimer;
   bool _isTyping = false;
   bool _isOtherTyping = false;
-  final encrypt.Key _encryptionKey = encrypt.Key.fromLength(32);
+  late encrypt.Key _encryptionKey;
   late encrypt.Encrypter _encrypter;
   Database? _localDb;
   final FlutterLocalNotificationsPlugin _notificationsPlugin =
       FlutterLocalNotificationsPlugin();
   String? _draftMessage;
+  bool _isSending = false;
 
   @override
   void initState() {
@@ -156,6 +151,9 @@ class _IndividualChatScreenState extends State<IndividualChatScreen>
   }
 
   void _initializeEncryption() {
+    final conversationId = _getConversationId();
+    final keyBytes = sha256.convert(utf8.encode(conversationId)).bytes;
+    _encryptionKey = encrypt.Key(Uint8List.fromList(keyBytes));
     _encrypter = encrypt.Encrypter(encrypt.AES(_encryptionKey));
   }
 
@@ -196,14 +194,14 @@ class _IndividualChatScreenState extends State<IndividualChatScreen>
   void _handleStoryInteraction(String type, Map<String, dynamic> data) {
     if (type == 'reply') {
       final replyText = data['content'];
+      final iv = encrypt.IV.fromSecureRandom(16);
+      final encryptedText = _encrypter.encrypt(replyText, iv: iv).base64;
       final newMessage = {
         'id': const Uuid().v4(),
         'sender_id': widget.currentUser['id'].toString(),
         'receiver_id': data['storyUserId'].toString(),
-        'message': _encrypter
-            .encrypt(replyText, iv: encrypt.IV.fromSecureRandom(16))
-            .base64,
-        'iv': base64Encode(encrypt.IV.fromSecureRandom(16).bytes),
+        'message': encryptedText,
+        'iv': base64Encode(iv.bytes),
         'created_at': DateTime.now().toIso8601String(),
         'is_read': false,
         'is_pinned': false,
@@ -227,8 +225,8 @@ class _IndividualChatScreenState extends State<IndividualChatScreen>
 
   Future<void> _loadMessages() async {
     try {
-      List<Map<String, dynamic>> messages;
-      messages = await AuthDatabase.instance.getMessagesBetween(
+      List<Map<String, dynamic>> messages =
+          await AuthDatabase.instance.getMessagesBetween(
         widget.currentUser['id'].toString(),
         widget.otherUser['id'].toString(),
       );
@@ -239,21 +237,33 @@ class _IndividualChatScreenState extends State<IndividualChatScreen>
                 : jsonDecode(message['reactions']))
             : (message['reactions'] ?? {});
         if (message['type'] == 'text' && message['iv'] != null) {
-          try {
-            final iv = encrypt.IV.fromBase64(message['iv']);
-            final decryptedText =
-                _encrypter.decrypt64(message['message'], iv: iv);
+          debugPrint(
+              'Retrieved IV for message ${message['id']}: ${message['iv']}');
+          if (RegExp(r'^[A-Za-z0-9+/=]+$').hasMatch(message['iv'])) {
+            try {
+              final iv = encrypt.IV.fromBase64(message['iv']);
+              final decryptedText =
+                  _encrypter.decrypt64(message['message'], iv: iv);
+              return {
+                ...message,
+                'message': decryptedText,
+                'reactions': reactions
+              };
+            } catch (e) {
+              debugPrint('Decryption failed for message ${message['id']}: $e');
+              return {
+                ...message,
+                'message': '[Decryption Failed: $e]',
+                'reactions': reactions
+              };
+            }
+          } else {
+            debugPrint(
+                'Invalid IV for message ${message['id']}: ${message['iv']}');
             return {
               ...message,
-              'message': decryptedText,
-              'reactions': reactions,
-            };
-          } catch (e) {
-            debugPrint('Error decrypting message ${message['id']}: $e');
-            return {
-              ...message,
-              'message': '[Decryption Failed]',
-              'reactions': reactions,
+              'message': '[Invalid IV]',
+              'reactions': reactions
             };
           }
         }
@@ -285,16 +295,21 @@ class _IndividualChatScreenState extends State<IndividualChatScreen>
   }
 
   void _sendMessage() async {
-    final text = _controller.text.trim();
-    if (text.isEmpty) return;
+    if (_isSending) return;
+    _isSending = true;
+    final plaintext = _controller.text.trim();
+    if (plaintext.isEmpty) {
+      _isSending = false;
+      return;
+    }
     final iv = encrypt.IV.fromSecureRandom(16);
-    final encryptedText = _encrypter.encrypt(text, iv: iv).base64;
+    final encryptedText = _encrypter.encrypt(plaintext, iv: iv).base64;
 
     String senderId = widget.currentUser['id'].toString();
     String receiverId = widget.otherUser['id'].toString();
     String conversationId = _getConversationId();
 
-    final message = {
+    final encryptedMessage = {
       'id': const Uuid().v4(),
       'sender_id': senderId,
       'receiver_id': receiverId,
@@ -310,15 +325,29 @@ class _IndividualChatScreenState extends State<IndividualChatScreen>
       'status': 'sent',
       'delivered_at': null,
       'read_at': null,
+      'isPending': true,
     };
 
-    debugPrint(
-        'Sending message: sender_id=$senderId, receiver_id=$receiverId, conversation_id=$conversationId');
-    _sendMessageToBoth(message);
-    _controller.clear();
-    setState(() => _replyingToMessageId = null);
-    _saveDraft('');
+    final decryptedMessage = {
+      ...encryptedMessage,
+      'message': plaintext, // Store plaintext for UI
+    };
+
+    setState(() {
+      _messages.add(decryptedMessage); // Add plaintext version to _messages
+    });
     _scrollToBottom();
+
+    try {
+      await _sendMessageToBoth(encryptedMessage); // Send encrypted version
+      _controller.clear();
+      setState(() => _replyingToMessageId = null);
+      _saveDraft('');
+    } catch (e) {
+      debugPrint('Error sending message: $e');
+    } finally {
+      _isSending = false;
+    }
   }
 
   Future<void> _startRecording() async {
@@ -582,15 +611,16 @@ class _IndividualChatScreenState extends State<IndividualChatScreen>
     });
   }
 
-  void _sendMessageToBoth(Map<String, dynamic> message) async {
+  Future<void> _sendMessageToBoth(Map<String, dynamic> message) async {
     try {
       final messageId = await AuthDatabase.instance.createMessage(message);
       final conversationId = _getConversationId();
-      final docRef = await _firestore
+      await _firestore
           .collection('conversations')
           .doc(conversationId)
           .collection('messages')
-          .add({
+          .doc(message['id'])
+          .set({
         'sender_id': message['sender_id'],
         'receiver_id': message['receiver_id'],
         'conversation_id': message['conversation_id'],
@@ -608,8 +638,8 @@ class _IndividualChatScreenState extends State<IndividualChatScreen>
         'delete_after': message['delete_after'],
       });
       await AuthDatabase.instance.updateMessage({
-        'id': messageId,
-        'firestore_id': docRef.id,
+        'id': message['id'],
+        'firestore_id': message['id'],
         'delivered_at': DateTime.now().toIso8601String(),
       });
       await _firestore.collection('conversations').doc(conversationId).set({
@@ -623,20 +653,17 @@ class _IndividualChatScreenState extends State<IndividualChatScreen>
             : message['type'],
         'timestamp': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
-      if (mounted) {
-        setState(() {
-          if (!_messages.any((m) =>
-              m['firestore_id'] == docRef.id || m['id'] == message['id'])) {
-            final newMessage = {
-              ...message,
-              'id': messageId,
-              'firestore_id': docRef.id,
-              'delivered_at': DateTime.now().toIso8601String(),
-            };
-            _messages.add(newMessage);
-          }
-        });
-      }
+
+      setState(() {
+        final index = _messages.indexWhere((m) => m['id'] == message['id']);
+        if (index != -1) {
+          _messages[index] = {
+            ..._messages[index],
+            'firestore_id': message['id'],
+            'isPending': false,
+          };
+        }
+      });
       _showNotification(message);
     } catch (e) {
       debugPrint('Error sending message: $e');
@@ -833,18 +860,8 @@ class _IndividualChatScreenState extends State<IndividualChatScreen>
   List<Map<String, dynamic>> _searchMessages() {
     if (_searchTerm.isEmpty) return _messages;
     return _messages.where((message) {
-      try {
-        final iv = message['iv'] != null
-            ? encrypt.IV.fromBase64(message['iv'])
-            : encrypt.IV.fromLength(16);
-        final msgText = message['type'] == 'text' && message['iv'] != null
-            ? _encrypter.decrypt64(message['message'], iv: iv)
-            : message['message'].toString().toLowerCase();
-        return msgText.contains(_searchTerm.toLowerCase());
-      } catch (e) {
-        debugPrint('Error decrypting message for search: $e');
-        return false;
-      }
+      final msgText = message['message'].toString().toLowerCase();
+      return msgText.contains(_searchTerm.toLowerCase());
     }).toList();
   }
 
@@ -917,29 +934,15 @@ class _IndividualChatScreenState extends State<IndividualChatScreen>
         .orderBy('timestamp', descending: false)
         .snapshots()
         .listen((snapshot) async {
-      final newMessages = <Map<String, dynamic>>[];
       for (var doc in snapshot.docChanges
           .where((change) => change.type == DocumentChangeType.added)) {
         final data = doc.doc.data()!;
-        String messageText = data['message'].toString();
-        final reactions = data['reactions'] is String
-            ? (data['reactions'].isEmpty ? {} : jsonDecode(data['reactions']))
-            : (data['reactions'] ?? {});
-        if (data['type'] == 'text' && data['iv'] != null) {
-          try {
-            final iv = encrypt.IV.fromBase64(data['iv']);
-            messageText = _encrypter.decrypt64(messageText, iv: iv);
-          } catch (e) {
-            debugPrint('Error decrypting Firestore message ${doc.doc.id}: $e');
-            messageText = '[Decryption Failed]';
-          }
-        }
-        final message = {
-          'id': data['id']?.toString() ?? doc.doc.id,
+        final encryptedMessage = {
+          'id': doc.doc.id, // Use Firestore document ID, which is the UUID
           'sender_id': data['sender_id'].toString(),
           'receiver_id': data['receiver_id']?.toString(),
           'conversation_id': data['conversation_id']?.toString(),
-          'message': messageText,
+          'message': data['message'].toString(), // Encrypted text
           'iv': data['iv']?.toString(),
           'created_at':
               (data['timestamp'] as Timestamp?)?.toDate().toIso8601String() ??
@@ -949,29 +952,52 @@ class _IndividualChatScreenState extends State<IndividualChatScreen>
           'replied_to': data['replied_to']?.toString(),
           'type': data['type']?.toString() ?? 'text',
           'firestore_id': doc.doc.id,
-          'reactions': reactions,
+          'reactions': data['reactions'] is String
+              ? (data['reactions'].isEmpty ? {} : jsonDecode(data['reactions']))
+              : (data['reactions'] ?? {}),
           'delivered_at':
               (data['delivered_at'] as Timestamp?)?.toDate().toIso8601String(),
           'read_at':
               (data['read_at'] as Timestamp?)?.toDate().toIso8601String(),
           'scheduled_at': data['scheduled_at']?.toString(),
           'delete_after': data['delete_after']?.toString(),
+          'isPending': false,
         };
-        if (!_messages.any((m) =>
-            m['firestore_id'] == message['firestore_id'] ||
-            m['id'] == message['id'])) {
-          await AuthDatabase.instance.createMessage(message);
-          newMessages.add(message);
+
+        // Store encrypted message in local database
+        await AuthDatabase.instance.createMessage(encryptedMessage);
+
+        // Decrypt for display
+        String messageText = encryptedMessage['message'];
+        if (encryptedMessage['type'] == 'text' &&
+            encryptedMessage['iv'] != null) {
+          try {
+            final iv = encrypt.IV.fromBase64(encryptedMessage['iv']);
+            messageText = _encrypter.decrypt64(messageText, iv: iv);
+          } catch (e) {
+            debugPrint('Error decrypting Firestore message ${doc.doc.id}: $e');
+            messageText = '[Decryption Failed]';
+          }
+        }
+
+        final decryptedMessage = {
+          ...encryptedMessage,
+          'message': messageText, // Plaintext for UI
+        };
+
+        final existingIndex =
+            _messages.indexWhere((m) => m['id'] == decryptedMessage['id']);
+        if (existingIndex != -1) {
+          setState(() {
+            _messages[existingIndex] = decryptedMessage;
+          });
+        } else {
+          setState(() {
+            _messages.add(decryptedMessage);
+          });
         }
       }
-      if (newMessages.isNotEmpty && mounted) {
-        setState(() {
-          _messages.addAll(newMessages);
-          _messages.sort((a, b) => DateTime.parse(a['created_at'])
-              .compareTo(DateTime.parse(b['created_at'])));
-        });
-        _scrollToBottom();
-      }
+      _scrollToBottom();
     }, onError: (e) => debugPrint('Error listening to messages: $e'));
   }
 
@@ -1201,6 +1227,7 @@ class _IndividualChatScreenState extends State<IndividualChatScreen>
           setCurrentlyPlaying: (id) => setState(() => _currentlyPlayingId = id),
           currentlyPlayingId: _currentlyPlayingId,
           encrypter: _encrypter,
+          isRead: item['data']['is_read'] == true, // Add this line
         ));
       } else {
         listWidgets.add(ListTile(
@@ -1237,8 +1264,7 @@ class _IndividualChatScreenState extends State<IndividualChatScreen>
           ],
         ),
         leadingWidth: 80,
-        title: Text(
-            "Chat with ${widget.otherUser['username']?.toString() ?? 'User'}"),
+        title: Text(widget.otherUser['username']?.toString() ?? 'User'),
         backgroundColor: Colors.deepPurple,
         actions: [
           IconButton(
@@ -1465,7 +1491,7 @@ class _IndividualChatScreenState extends State<IndividualChatScreen>
                               : IconButton(
                                   icon: const Icon(Icons.send,
                                       color: Colors.white),
-                                  onPressed: _sendMessage),
+                                  onPressed: _isSending ? null : _sendMessage),
                         ],
                       ),
                       if (_showEmojiPicker)
@@ -1596,5 +1622,3 @@ class _WebRTCCallWidgetState extends State<WebRTCCallWidget> {
     );
   }
 }
-
-
