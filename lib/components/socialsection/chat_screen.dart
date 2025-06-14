@@ -1622,3 +1622,4 @@ class _WebRTCCallWidgetState extends State<WebRTCCallWidget> {
     );
   }
 }
+
