@@ -23,6 +23,8 @@ import 'package:sqflite/sqflite.dart';
 import 'dart:convert';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'chat_widgets.dart';
+import 'package:crypto/crypto.dart';
+import 'group_settings_screen.dart';
 
 class GroupChatScreen extends StatefulWidget {
   final Map<String, dynamic> currentUser;
@@ -46,25 +48,17 @@ class _GroupChatScreenState extends State<GroupChatScreen>
   final TextEditingController _controller = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   String? _replyingToMessageId;
-
-  // Chat background settings
   Color _chatBgColor = Colors.white;
   String? _chatBgImage;
   String? _cinematicTheme;
-
-  // Search settings
   String _searchTerm = "";
   bool _showSearch = false;
   final TextEditingController _searchController = TextEditingController();
-
-  // Audio recording
   FlutterSoundRecorder? _recorder;
   bool _isRecording = false;
   String? _audioPath;
   AnimationController? _animationController;
   Animation<double>? _pulseAnimation;
-
-  // WebRTC for group calls
   Map<String, RTCPeerConnection> _peerConnections = {};
   Map<String, MediaStream> _remoteStreams = {};
   MediaStream? _localStream;
@@ -75,33 +69,29 @@ class _GroupChatScreenState extends State<GroupChatScreen>
   StreamSubscription<QuerySnapshot>? _candidatesSubscription;
   bool _isInCall = false;
   bool _isVideoCall = false;
-
-  // Firestore and Supabase
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final SupabaseClient _supabase = Supabase.instance.client;
-
-  // Firestore subscriptions
   StreamSubscription<DocumentSnapshot>? _typingSubscription;
   StreamSubscription<QuerySnapshot>? _messagesSubscription;
-
-  // New state variables for features
   bool _showEmojiPicker = false;
   final AudioPlayer _audioPlayer = AudioPlayer();
   String? _currentlyPlayingId;
   Timer? _typingTimer;
   bool _isTyping = false;
   List<String> _typingUsers = [];
-  final encrypt.Key _encryptionKey = encrypt.Key.fromLength(32);
   late encrypt.Encrypter _encrypter;
   Database? _localDb;
   final FlutterLocalNotificationsPlugin _notificationsPlugin =
       FlutterLocalNotificationsPlugin();
   String? _draftMessage;
   Map<String, String> _userNames = {};
+  late List<String> _participantIds;
 
   @override
   void initState() {
     super.initState();
+    _participantIds =
+        widget.participants.map((p) => p['id'].toString()).toList();
     _userNames = {
       for (var participant in widget.participants)
         participant['id'].toString(): participant['username'] ?? 'Unknown'
@@ -134,7 +124,6 @@ class _GroupChatScreenState extends State<GroupChatScreen>
           .where((id) => id != widget.currentUser['id'].toString())
           .toList());
     });
-    // Listen for active calls in this conversation
     _firestore
         .collection('calls')
         .where('conversation_id',
@@ -152,7 +141,10 @@ class _GroupChatScreenState extends State<GroupChatScreen>
   }
 
   void _initializeEncryption() {
-    _encrypter = encrypt.Encrypter(encrypt.AES(_encryptionKey));
+    final conversationId = widget.conversation['id'].toString();
+    final keyBytes = sha256.convert(utf8.encode(conversationId)).bytes;
+    final encryptionKey = encrypt.Key(Uint8List.fromList(keyBytes));
+    _encrypter = encrypt.Encrypter(encrypt.AES(encryptionKey));
   }
 
   Future<void> _initializeLocalDatabase() async {
@@ -191,7 +183,6 @@ class _GroupChatScreenState extends State<GroupChatScreen>
 
   Future<void> _loadMessages() async {
     try {
-      List<Map<String, dynamic>> messages;
       final conversationId = widget.conversation['id'].toString();
       final snapshot = await _firestore
           .collection('conversations')
@@ -199,7 +190,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
           .collection('messages')
           .orderBy('timestamp', descending: false)
           .get();
-      messages = snapshot.docs.map((doc) {
+      final messages = snapshot.docs.map((doc) {
         final data = doc.data();
         return {
           'id': doc.id,
@@ -211,8 +202,8 @@ class _GroupChatScreenState extends State<GroupChatScreen>
           'created_at':
               (data['timestamp'] as Timestamp?)?.toDate().toIso8601String() ??
                   DateTime.now().toIso8601String(),
-          'is_read': data['is_read'] == true ? 1 : 0,
-          'is_pinned': data['is_pinned'] == true ? 1 : 0,
+          'is_read': data['is_read'] == true,
+          'is_pinned': data['is_pinned'] == true,
           'replied_to': data['replied_to']?.toString(),
           'type': data['type']?.toString() ?? 'text',
           'firestore_id': doc.id,
@@ -223,6 +214,13 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                       ? {}
                       : jsonDecode(data['reactions']))
                   : {}),
+          'delivered_to': (data['delivered_to'] as List?)
+                  ?.map((e) => e.toString())
+                  .toList() ??
+              [widget.currentUser['id'].toString()],
+          'read_by':
+              (data['read_by'] as List?)?.map((e) => e.toString()).toList() ??
+                  [],
           'delivered_at':
               (data['delivered_at'] as Timestamp?)?.toDate().toIso8601String(),
           'read_at':
@@ -268,10 +266,51 @@ class _GroupChatScreenState extends State<GroupChatScreen>
         }
         return {...message, 'reactions': reactions};
       }).toList();
-      if (mounted) setState(() => _messages = decryptedMessages);
+
+      if (mounted) {
+        setState(() {
+          _messages = decryptedMessages
+              .where((m) =>
+                  !_messages.any((existing) => existing['id'] == m['id']))
+              .toList();
+        });
+      }
       _syncOfflineMessages();
+      await _markMessagesAsDeliveredAndRead();
     } catch (e) {
       debugPrint('Error loading messages: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to load messages: $e')),
+      );
+    }
+  }
+
+  Future<void> _markMessagesAsDeliveredAndRead() async {
+    final conversationId = widget.conversation['id'].toString();
+    final currentUserId = widget.currentUser['id'].toString();
+    for (var message in _messages) {
+      if (!message['delivered_to'].contains(currentUserId)) {
+        await _firestore
+            .collection('conversations')
+            .doc(conversationId)
+            .collection('messages')
+            .doc(message['firestore_id'])
+            .update({
+          'delivered_to': FieldValue.arrayUnion([currentUserId]),
+        });
+        message['delivered_to'].add(currentUserId);
+      }
+      if (!message['read_by'].contains(currentUserId)) {
+        await _firestore
+            .collection('conversations')
+            .doc(conversationId)
+            .collection('messages')
+            .doc(message['firestore_id'])
+            .update({
+          'read_by': FieldValue.arrayUnion([currentUserId]),
+        });
+        message['read_by'].add(currentUserId);
+      }
     }
   }
 
@@ -283,22 +322,6 @@ class _GroupChatScreenState extends State<GroupChatScreen>
       setState(() => _draftMessage = drafts.first['content'] as String?);
       _controller.text = _draftMessage ?? '';
     }
-  }
-
-  Future<void> _loadUserNames() async {
-    final participantIds = (widget.conversation['participants'] as List?)
-            ?.map((e) => e.toString())
-            .toList() ??
-        [];
-    for (var id in participantIds) {
-      if (!_userNames.containsKey(id)) {
-        final user = await AuthDatabase.instance.getUserById(id);
-        if (user != null) {
-          _userNames[id] = user['username']?.toString() ?? 'Unknown';
-        }
-      }
-    }
-    if (mounted) setState(() {});
   }
 
   void _saveDraft(String text) async {
@@ -314,15 +337,13 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     if (text.isEmpty) return;
     final iv = encrypt.IV.fromSecureRandom(16);
     final encryptedText = _encrypter.encrypt(text, iv: iv).base64;
-
-    String senderId = widget.currentUser['id'].toString();
-    String conversationId = widget.conversation['id'].toString();
+    final messageId = const Uuid().v4();
 
     final message = {
-      'id': const Uuid().v4(),
-      'sender_id': senderId,
-      'receiver_id': conversationId,
-      'conversation_id': conversationId,
+      'id': messageId,
+      'sender_id': widget.currentUser['id'].toString(),
+      'receiver_id': widget.conversation['id'].toString(),
+      'conversation_id': widget.conversation['id'].toString(),
       'message': encryptedText,
       'iv': base64Encode(iv.bytes),
       'created_at': DateTime.now().toIso8601String(),
@@ -331,13 +352,12 @@ class _GroupChatScreenState extends State<GroupChatScreen>
       'replied_to': _replyingToMessageId,
       'type': 'text',
       'reactions': {},
-      'status': 'sent',
-      'delivered_at': null,
+      'delivered_to': [widget.currentUser['id'].toString()],
+      'read_by': [],
+      'delivered_at': DateTime.now().toIso8601String(),
       'read_at': null,
     };
 
-    debugPrint(
-        'Sending message: sender_id=$senderId, conversation_id=$conversationId');
     await _sendMessageToBoth(message);
     _controller.clear();
     setState(() => _replyingToMessageId = null);
@@ -352,6 +372,10 @@ class _GroupChatScreenState extends State<GroupChatScreen>
       await _recorder!.startRecorder(toFile: _audioPath);
       setState(() => _isRecording = true);
       _animationController?.forward();
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Microphone permission denied')),
+      );
     }
   }
 
@@ -361,8 +385,15 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     _animationController?.reset();
     if (_audioPath != null) {
       final audioUrl = await _uploadFile(File(_audioPath!), 'audio');
+      if (audioUrl.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to upload audio')),
+        );
+        return;
+      }
+      final messageId = const Uuid().v4();
       final message = {
-        'id': const Uuid().v4(),
+        'id': messageId,
         'sender_id': widget.currentUser['id'].toString(),
         'receiver_id': widget.conversation['id'].toString(),
         'conversation_id': widget.conversation['id'].toString(),
@@ -373,6 +404,8 @@ class _GroupChatScreenState extends State<GroupChatScreen>
         'replied_to': _replyingToMessageId,
         'type': 'audio',
         'reactions': {},
+        'delivered_to': [widget.currentUser['id'].toString()],
+        'read_by': [],
       };
       await _sendMessageToBoth(message);
       _scrollToBottom();
@@ -397,8 +430,15 @@ class _GroupChatScreenState extends State<GroupChatScreen>
       } else {
         return;
       }
+      if (fileUrl.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to upload attachment')),
+        );
+        return;
+      }
+      final messageId = const Uuid().v4();
       final message = {
-        'id': const Uuid().v4(),
+        'id': messageId,
         'sender_id': widget.currentUser['id'].toString(),
         'receiver_id': widget.conversation['id'].toString(),
         'conversation_id': widget.conversation['id'].toString(),
@@ -409,6 +449,8 @@ class _GroupChatScreenState extends State<GroupChatScreen>
         'replied_to': _replyingToMessageId,
         'type': fileType,
         'reactions': {},
+        'delivered_to': [widget.currentUser['id'].toString()],
+        'read_by': [],
       };
       await _sendMessageToBoth(message);
       _scrollToBottom();
@@ -462,6 +504,10 @@ class _GroupChatScreenState extends State<GroupChatScreen>
       });
 
       _setupCallListeners(callId);
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Required permissions denied')),
+      );
     }
   }
 
@@ -514,10 +560,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
               .add({
             'from': widget.currentUser['id'].toString(),
             'to': from,
-            'answer': {
-              'sdp': answer.sdp,
-              'type': answer.type,
-            },
+            'answer': {'sdp': answer.sdp, 'type': answer.type},
           });
 
           _listenForCandidates(callId, from);
@@ -573,7 +616,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
   Future<RTCPeerConnection> _createPeerConnection(String peerId) async {
     final pc = await createPeerConnection({
       'iceServers': [
-        {'url': 'stun:stun.l.google.com:19302'},
+        {'url': 'stun:stun.l.google.com:19302'}
       ]
     });
 
@@ -614,10 +657,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     await _firestore.collection('calls').doc(callId).collection('offers').add({
       'from': widget.currentUser['id'].toString(),
       'to': to,
-      'offer': {
-        'sdp': offer.sdp,
-        'type': offer.type,
-      },
+      'offer': {'sdp': offer.sdp, 'type': offer.type},
     });
   }
 
@@ -669,7 +709,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
 
   Future<void> _sendMessageToBoth(Map<String, dynamic> message) async {
     try {
-      final messageId = await AuthDatabase.instance.createMessage(message);
+      final messageId = message['id'];
       final conversationId = widget.conversation['id'].toString();
 
       final convoDoc = await _firestore
@@ -677,15 +717,15 @@ class _GroupChatScreenState extends State<GroupChatScreen>
           .doc(conversationId)
           .get();
       if (!convoDoc.exists || convoDoc.data()?['type'] != 'group') {
-        debugPrint('Conversation $conversationId is invalid or not a group');
-        return;
+        throw Exception('Invalid group conversation');
       }
 
-      final docRef = await _firestore
+      await _firestore
           .collection('conversations')
           .doc(conversationId)
           .collection('messages')
-          .add({
+          .doc(messageId)
+          .set({
         'sender_id': message['sender_id'],
         'receiver_id': message['receiver_id'],
         'conversation_id': message['conversation_id'],
@@ -697,17 +737,16 @@ class _GroupChatScreenState extends State<GroupChatScreen>
         'replied_to': message['replied_to'],
         'type': message['type'],
         'reactions': message['reactions'] ?? {},
+        'delivered_to': message['delivered_to'],
+        'read_by': message['read_by'],
         'delivered_at': FieldValue.serverTimestamp(),
         'read_at': null,
         'scheduled_at': message['scheduled_at'],
         'delete_after': message['delete_after'],
       });
 
-      await AuthDatabase.instance.updateMessage({
-        'id': messageId,
-        'firestore_id': docRef.id,
-        'delivered_at': DateTime.now().toIso8601String(),
-      });
+      await AuthDatabase.instance
+          .createMessage({...message, 'firestore_id': messageId});
 
       await _firestore.collection('conversations').doc(conversationId).set({
         'participants': widget.conversation['participants'],
@@ -722,12 +761,10 @@ class _GroupChatScreenState extends State<GroupChatScreen>
 
       if (mounted) {
         setState(() {
-          if (!_messages.any((m) =>
-              m['firestore_id'] == docRef.id || m['id'] == message['id'])) {
+          if (!_messages.any((m) => m['id'] == messageId)) {
             final newMessage = {
               ...message,
-              'id': messageId,
-              'firestore_id': docRef.id,
+              'firestore_id': messageId,
               'delivered_at': DateTime.now().toIso8601String(),
               'sender_username': _userNames[message['sender_id']] ??
                   widget.currentUser['username'],
@@ -741,6 +778,9 @@ class _GroupChatScreenState extends State<GroupChatScreen>
       debugPrint('Error sending message: $e');
       await _localDb!.insert('offline_messages',
           {'id': message['id'], 'data': jsonEncode(message)});
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Message failed to send: $e')),
+      );
     }
   }
 
@@ -775,14 +815,12 @@ class _GroupChatScreenState extends State<GroupChatScreen>
 
   void _deleteMessage(int index) async {
     final message = _messages[index];
-    final messageId = message['id'].toString();
     try {
-      await AuthDatabase.instance.deleteMessage(messageId);
+      await AuthDatabase.instance.deleteMessage(message['id']);
       if (message['firestore_id'] != null) {
-        final conversationId = widget.conversation['id'];
         await _firestore
             .collection('conversations')
-            .doc(conversationId)
+            .doc(widget.conversation['id'])
             .collection('messages')
             .doc(message['firestore_id'])
             .delete();
@@ -790,6 +828,9 @@ class _GroupChatScreenState extends State<GroupChatScreen>
       setState(() => _messages.removeAt(index));
     } catch (e) {
       debugPrint('Error deleting message: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to delete message: $e')),
+      );
     }
   }
 
@@ -804,10 +845,9 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     try {
       await AuthDatabase.instance.updateMessage(updatedMessage);
       if (message['firestore_id'] != null) {
-        final conversationId = widget.conversation['id'];
         await _firestore
             .collection('conversations')
-            .doc(conversationId)
+            .doc(widget.conversation['id'])
             .collection('messages')
             .doc(message['firestore_id'])
             .update({
@@ -822,6 +862,9 @@ class _GroupChatScreenState extends State<GroupChatScreen>
       });
     } catch (e) {
       debugPrint('Error updating read status: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to update read status: $e')),
+      );
     }
   }
 
@@ -840,10 +883,9 @@ class _GroupChatScreenState extends State<GroupChatScreen>
     try {
       await AuthDatabase.instance.updateMessage(updatedMessage);
       if (message['firestore_id'] != null) {
-        final conversationId = widget.conversation['id'];
         await _firestore
             .collection('conversations')
-            .doc(conversationId)
+            .doc(widget.conversation['id'])
             .collection('messages')
             .doc(message['firestore_id'])
             .update({'is_pinned': !isPinned});
@@ -851,6 +893,9 @@ class _GroupChatScreenState extends State<GroupChatScreen>
       setState(() => _messages[index]['is_pinned'] = !isPinned);
     } catch (e) {
       debugPrint('Error pinning message: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to pin message: $e')),
+      );
     }
   }
 
@@ -869,10 +914,9 @@ class _GroupChatScreenState extends State<GroupChatScreen>
       await AuthDatabase.instance
           .updateMessage({'id': messageId, 'reactions': reactions});
       if (message['firestore_id'] != null) {
-        final conversationId = widget.conversation['id'];
         await _firestore
             .collection('conversations')
-            .doc(conversationId)
+            .doc(widget.conversation['id'])
             .collection('messages')
             .doc(message['firestore_id'])
             .update({'reactions': reactions});
@@ -880,19 +924,24 @@ class _GroupChatScreenState extends State<GroupChatScreen>
       setState(() => message['reactions'] = reactions);
     } catch (e) {
       debugPrint('Error adding reaction: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to add reaction: $e')),
+      );
     }
   }
 
   void _forwardMessage(Map<String, dynamic> message) {
     ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Forwarding message: ${message['message']}')));
+      SnackBar(content: Text('Forwarding message: ${message['message']}')),
+    );
   }
 
   void _scheduleMessage(String text, DateTime time) {
     final iv = encrypt.IV.fromSecureRandom(16);
     final encryptedText = _encrypter.encrypt(text, iv: iv).base64;
+    final messageId = const Uuid().v4();
     final message = {
-      'id': const Uuid().v4(),
+      'id': messageId,
       'sender_id': widget.currentUser['id'].toString(),
       'receiver_id': widget.conversation['id'].toString(),
       'conversation_id': widget.conversation['id'].toString(),
@@ -905,6 +954,8 @@ class _GroupChatScreenState extends State<GroupChatScreen>
       'type': 'text',
       'reactions': {},
       'scheduled_at': time.toIso8601String(),
+      'delivered_to': [widget.currentUser['id'].toString()],
+      'read_by': [],
     };
     _sendMessageToBoth(message);
   }
@@ -916,10 +967,9 @@ class _GroupChatScreenState extends State<GroupChatScreen>
       await AuthDatabase.instance.updateMessage(
           {'id': messageId, 'delete_after': deleteTime.toIso8601String()});
       if (message['firestore_id'] != null) {
-        final conversationId = widget.conversation['id'];
         await _firestore
             .collection('conversations')
-            .doc(conversationId)
+            .doc(widget.conversation['id'])
             .collection('messages')
             .doc(message['firestore_id'])
             .update({'delete_after': deleteTime.toIso8601String()});
@@ -927,6 +977,9 @@ class _GroupChatScreenState extends State<GroupChatScreen>
       setState(() => message['delete_after'] = deleteTime.toIso8601String());
     } catch (e) {
       debugPrint('Error setting auto-delete: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to set auto-delete: $e')),
+      );
     }
   }
 
@@ -966,26 +1019,32 @@ class _GroupChatScreenState extends State<GroupChatScreen>
       debugPrint('Error decrypting notification: $e');
       notificationText = '[Decryption Failed]';
     }
-    String title = 'New Message in ${widget.conversation['group_name']}';
     await _notificationsPlugin.show(
       0,
-      title,
+      'New Message in ${widget.conversation['group_name']}',
       notificationText,
       notificationDetails,
     );
   }
 
   void _updateTypingStatus(bool isTyping) async {
-    final conversationId = widget.conversation['id'];
-    final userId = widget.currentUser['id'].toString();
-    if (isTyping) {
-      await _firestore.collection('conversations').doc(conversationId).set({
-        'typing_users': FieldValue.arrayUnion([userId])
-      }, SetOptions(merge: true));
-    } else {
-      await _firestore.collection('conversations').doc(conversationId).update({
-        'typing_users': FieldValue.arrayRemove([userId])
-      });
+    try {
+      final conversationId = widget.conversation['id'];
+      final userId = widget.currentUser['id'].toString();
+      if (isTyping) {
+        await _firestore.collection('conversations').doc(conversationId).set({
+          'typing_users': FieldValue.arrayUnion([userId])
+        }, SetOptions(merge: true));
+      } else {
+        await _firestore
+            .collection('conversations')
+            .doc(conversationId)
+            .update({
+          'typing_users': FieldValue.arrayRemove([userId])
+        });
+      }
+    } catch (e) {
+      debugPrint('Error updating typing status: $e');
     }
   }
 
@@ -1002,6 +1061,9 @@ class _GroupChatScreenState extends State<GroupChatScreen>
       for (var doc in snapshot.docChanges
           .where((change) => change.type == DocumentChangeType.added)) {
         final data = doc.doc.data()!;
+        final messageId = doc.doc.id;
+        if (_messages.any((m) => m['id'] == messageId)) continue;
+
         String messageText = data['message'].toString();
         final reactions = data['reactions'] is String
             ? (data['reactions'].isEmpty ? {} : jsonDecode(data['reactions']))
@@ -1011,14 +1073,14 @@ class _GroupChatScreenState extends State<GroupChatScreen>
             final iv = encrypt.IV.fromBase64(data['iv']);
             messageText = _encrypter.decrypt64(messageText, iv: iv);
           } catch (e) {
-            debugPrint('Error decrypting Firestore message ${doc.doc.id}: $e');
+            debugPrint('Error decrypting Firestore message $messageId: $e');
             messageText = '[Decryption Failed]';
           }
         }
         final senderId = data['sender_id'].toString();
         String? senderUsername = _userNames[senderId] ?? 'Unknown';
         final message = {
-          'id': data['id']?.toString() ?? doc.doc.id,
+          'id': messageId,
           'sender_id': senderId,
           'receiver_id': data['receiver_id']?.toString(),
           'conversation_id': data['conversation_id']?.toString(),
@@ -1031,8 +1093,15 @@ class _GroupChatScreenState extends State<GroupChatScreen>
           'is_pinned': data['is_pinned'] == true,
           'replied_to': data['replied_to']?.toString(),
           'type': data['type']?.toString() ?? 'text',
-          'firestore_id': doc.doc.id,
+          'firestore_id': messageId,
           'reactions': reactions,
+          'delivered_to': (data['delivered_to'] as List?)
+                  ?.map((e) => e.toString())
+                  .toList() ??
+              [],
+          'read_by':
+              (data['read_by'] as List?)?.map((e) => e.toString()).toList() ??
+                  [],
           'delivered_at':
               (data['delivered_at'] as Timestamp?)?.toDate().toIso8601String(),
           'read_at':
@@ -1041,12 +1110,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
           'delete_after': data['delete_after']?.toString(),
           'sender_username': senderUsername,
         };
-        if (!_messages.any((m) =>
-            m['firestore_id'] == message['firestore_id'] ||
-            m['id'] == message['id'])) {
-          await AuthDatabase.instance.createMessage(message);
-          newMessages.add(message);
-        }
+        newMessages.add(message);
       }
       if (newMessages.isNotEmpty && mounted) {
         setState(() {
@@ -1057,6 +1121,10 @@ class _GroupChatScreenState extends State<GroupChatScreen>
         _scrollToBottom();
       }
     }, onError: (e) => debugPrint('Error listening to messages: $e'));
+  }
+
+  void _setCurrentlyPlaying(String? id) {
+    setState(() => _currentlyPlayingId = id);
   }
 
   @override
@@ -1248,31 +1316,35 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                   style: const TextStyle(
                       color: Colors.white70, fontWeight: FontWeight.bold))));
         }
+        final message = item['data'];
+        final isMe = message['sender_id'] == widget.currentUser['id'];
         listWidgets.add(MessageWidget(
-          message: item['data'],
-          isMe: item['data']['sender_id'] == widget.currentUser['id'],
+          message: message,
+          isMe: isMe,
           repliedToText: item['replied_to_text'],
-          onReply: () => _replyToMessage(_messages.indexOf(item['data'])),
-          onShare: () => _forwardMessage(item['data']),
-          onLongPress: () => _showMessageOptions(context, item['data']),
+          onReply: () => _replyToMessage(_messages.indexOf(message)),
+          onShare: () => _forwardMessage(message),
+          onLongPress: () => _showMessageOptions(context, message),
           onTapOriginal: () {
-            final originalMessage = _messages.firstWhere(
-                (m) => m['id'] == item['data']['replied_to'],
-                orElse: () => {});
-            if (originalMessage.isNotEmpty) {
-              final index = _messages.indexOf(originalMessage);
+            if (message['replied_to'] != null) {
+              final index =
+                  _messages.indexWhere((m) => m['id'] == message['replied_to']);
               if (index != -1) {
-                _scrollController.animateTo(index * 100.0,
-                    duration: const Duration(milliseconds: 300),
-                    curve: Curves.easeInOut);
+                _scrollController.animateTo(
+                  index * 100.0, // Adjust based on actual message height
+                  duration: const Duration(milliseconds: 300),
+                  curve: Curves.easeInOut,
+                );
               }
             }
           },
-          onDelete: () => _deleteMessage(_messages.indexOf(item['data'])),
+          onDelete: () => _deleteMessage(_messages.indexOf(message)),
           audioPlayer: _audioPlayer,
-          setCurrentlyPlaying: (id) => setState(() => _currentlyPlayingId = id),
+          setCurrentlyPlaying: _setCurrentlyPlaying,
           currentlyPlayingId: _currentlyPlayingId,
           encrypter: _encrypter,
+          isRead:
+              message['read_by'].contains(widget.currentUser['id'].toString()),
         ));
       }
     }
@@ -1284,7 +1356,20 @@ class _GroupChatScreenState extends State<GroupChatScreen>
             IconButton(
                 icon: const Icon(Icons.arrow_back, color: Colors.white),
                 onPressed: () => Navigator.pop(context)),
-            const Icon(Icons.group, color: Colors.white),
+            GestureDetector(
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => GroupSettingsScreen(
+                      conversation: widget.conversation,
+                      participants: widget.participants,
+                    ),
+                  ),
+                );
+              },
+              child: const Icon(Icons.group, color: Colors.white),
+            ),
           ],
         ),
         leadingWidth: 80,
@@ -1528,11 +1613,9 @@ class _GroupChatScreenState extends State<GroupChatScreen>
                             },
                             config: Config(
                               emojiViewConfig: EmojiViewConfig(
-                                backgroundColor: Colors.white,
-                              ),
+                                  backgroundColor: Colors.white),
                               categoryViewConfig: CategoryViewConfig(
-                                iconColorSelected: Colors.deepPurple,
-                              ),
+                                  iconColorSelected: Colors.deepPurple),
                             ),
                           ),
                         )
@@ -1631,9 +1714,8 @@ class _WebRTCCallWidgetState extends State<WebRTCCallWidget> {
         children: [
           if (widget.isVideo) ...[
             GridView.builder(
-              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-              ),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2),
               itemCount: _remoteRenderers.length,
               itemBuilder: (context, index) {
                 final renderer = _remoteRenderers.values.elementAt(index);
@@ -1673,4 +1755,3 @@ class _WebRTCCallWidgetState extends State<WebRTCCallWidget> {
     );
   }
 }
-
