@@ -51,7 +51,6 @@ class _MessagesScreenState extends State<MessagesScreen> {
           .getConversationsForUser(widget.currentUser['id']);
       final userMap = <String, Map<String, dynamic>>{};
 
-      // Collect all participant IDs across conversations
       final allParticipantIds = <String>{};
       for (var convo in convos) {
         final participantIds = (convo['participants'] as List?)
@@ -61,7 +60,6 @@ class _MessagesScreenState extends State<MessagesScreen> {
         allParticipantIds.addAll(participantIds);
       }
 
-      // Fetch user data for all participants
       for (var id in allParticipantIds) {
         if (!userMap.containsKey(id)) {
           final user = await AuthDatabase.instance.getUserById(id);
@@ -69,7 +67,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
         }
       }
 
-      final convosWithUnread = await Future.wait(convos.map((convo) async {
+      final convosWithDetails = await Future.wait(convos.map((convo) async {
         final participantIds = (convo['participants'] as List?)
                 ?.map((id) => id.toString())
                 .toList() ??
@@ -78,16 +76,20 @@ class _MessagesScreenState extends State<MessagesScreen> {
             participantIds.map((id) => userMap[id]!).toList();
         final unreadCount = await AuthDatabase.instance
             .getUnreadCount(convo['id'], widget.currentUser['id']);
+        final lastMessageData = await _getLastMessage(convo['id']);
         return {
           ...convo,
           'unread_count': unreadCount,
-          'participantsData': participantsData, // Add participant data
+          'participantsData': participantsData,
+          'last_message': lastMessageData['message'] ?? 'No messages yet',
+          'last_message_sender': lastMessageData['sender_username'] ?? '',
+          'last_message_is_read': lastMessageData['is_read'] ?? false,
         };
       }).toList());
 
       if (mounted) {
         setState(() {
-          _conversations = convosWithUnread
+          _conversations = convosWithDetails
             ..sort((a, b) {
               final aPinned =
                   a['pinned_users']?.contains(widget.currentUser['id']) ??
@@ -113,6 +115,33 @@ class _MessagesScreenState extends State<MessagesScreen> {
           _errorMessage = 'Failed to load conversations: $e';
         });
       }
+    }
+  }
+
+  Future<Map<String, dynamic>> _getLastMessage(String convoId) async {
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection('conversations')
+          .doc(convoId)
+          .collection('messages')
+          .orderBy('timestamp', descending: true)
+          .limit(1)
+          .get();
+      if (snapshot.docs.isNotEmpty) {
+        final messageData = snapshot.docs.first.data();
+        final senderId = messageData['sender_id'].toString();
+        final senderUsername = _userMap[senderId]?['username'] ?? 'Unknown';
+        final isRead = messageData['is_read'] ?? false;
+        return {
+          'message': messageData['message'],
+          'sender_username': senderUsername,
+          'is_read': isRead,
+        };
+      }
+      return {};
+    } catch (e) {
+      debugPrint('Error fetching last message: $e');
+      return {};
     }
   }
 
@@ -214,18 +243,6 @@ class _MessagesScreenState extends State<MessagesScreen> {
     }
   }
 
-  Future<String> _getUserStatus(String userId) async {
-    try {
-      final doc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(userId)
-          .get();
-      return doc.exists ? (doc.data()?['status'] ?? 'Offline') : 'Offline';
-    } catch (e) {
-      return 'Offline';
-    }
-  }
-
   Future<String> _getConversationName(Map<String, dynamic> convo) async {
     if (convo['type'] == 'group') {
       return convo['group_name'] ?? 'Group Chat';
@@ -304,10 +321,8 @@ class _MessagesScreenState extends State<MessagesScreen> {
           .collection('conversations')
           .doc(convo['id'])
           .update({'pinned_users': pinnedUsers});
-      await AuthDatabase.instance.updateConversation({
-        'id': convo['id'],
-        'pinned_users': pinnedUsers,
-      });
+      await AuthDatabase.instance
+          .updateConversation({'id': convo['id'], 'pinned_users': pinnedUsers});
       _loadConversations();
     } catch (error) {
       ScaffoldMessenger.of(context)
@@ -367,48 +382,8 @@ class _MessagesScreenState extends State<MessagesScreen> {
       _loadConversations();
     } catch (error) {
       ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to block/unblock this: $error')));
+          SnackBar(content: Text('Failed to block/unblock: $error')));
     }
-  }
-
-  Widget _buildStatusIndicator(String status, Color accentColor) {
-    Color dotColor;
-    switch (status.toLowerCase()) {
-      case 'online':
-        dotColor = Colors.green;
-        break;
-      case 'busy':
-        dotColor = Colors.orange;
-        break;
-      case 'offline':
-      default:
-        dotColor = Colors.red;
-        break;
-    }
-
-    return Row(
-      children: [
-        Container(
-          width: 8,
-          height: 8,
-          decoration: BoxDecoration(
-            color: dotColor,
-            shape: BoxShape.circle,
-          ),
-        ),
-        const SizedBox(width: 6),
-        Text(
-          status,
-          style: TextStyle(
-            fontSize: 14,
-            color: Colors.white,
-            shadows: [
-              Shadow(color: Colors.black, offset: Offset(2, 2), blurRadius: 4)
-            ],
-          ),
-        ),
-      ],
-    );
   }
 
   @override
@@ -755,44 +730,35 @@ class _MessagesScreenState extends State<MessagesScreen> {
                                               );
                                             },
                                           ),
-                                          subtitle: Column(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
+                                          subtitle: Row(
                                             children: [
-                                              Text(
-                                                convo['last_message']
-                                                        ?.toString() ??
-                                                    'No messages yet',
-                                                style: TextStyle(
-                                                  color: Colors.white70,
-                                                  fontSize: 14,
-                                                  fontWeight: unreadCount > 0
-                                                      ? FontWeight.bold
-                                                      : FontWeight.normal,
-                                                  shadows: const [
-                                                    Shadow(
-                                                        color: Colors.black54,
-                                                        offset: Offset(2, 2),
-                                                        blurRadius: 4)
-                                                  ],
+                                              if (convo['last_message'] !=
+                                                  'No messages yet')
+                                                Icon(
+                                                  convo['last_message_is_read']
+                                                      ? Icons.done_all
+                                                      : Icons.done,
+                                                  size: 16,
+                                                  color: convo[
+                                                          'last_message_is_read']
+                                                      ? Colors.blue
+                                                      : Colors.grey,
                                                 ),
-                                                maxLines: 1,
-                                                overflow: TextOverflow.ellipsis,
-                                              ),
-                                              if (convo['type'] == 'group')
-                                                Text(
-                                                  (convo['participantsData']
-                                                          as List<
-                                                              Map<String,
-                                                                  dynamic>>)
-                                                      .map((p) =>
-                                                          p['username'] ??
-                                                          'Unknown')
-                                                      .join(', '),
-                                                  style: const TextStyle(
-                                                    color: Colors.white54,
-                                                    fontSize: 12,
-                                                    shadows: [
+                                              const SizedBox(width: 4),
+                                              Expanded(
+                                                child: Text(
+                                                  convo['type'] == 'group'
+                                                      ? '${convo['last_message_sender']}: ${convo['last_message']}'
+                                                      : convo['last_message']
+                                                              ?.toString() ??
+                                                          'No messages yet',
+                                                  style: TextStyle(
+                                                    color: Colors.white70,
+                                                    fontSize: 14,
+                                                    fontWeight: unreadCount > 0
+                                                        ? FontWeight.bold
+                                                        : FontWeight.normal,
+                                                    shadows: const [
                                                       Shadow(
                                                           color: Colors.black54,
                                                           offset: Offset(2, 2),
@@ -803,6 +769,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
                                                   overflow:
                                                       TextOverflow.ellipsis,
                                                 ),
+                                              ),
                                             ],
                                           ),
                                           trailing: Row(
@@ -871,12 +838,16 @@ class _MessagesScreenState extends State<MessagesScreen> {
                                                     convo['user_id']
                                                             ?.toString() ??
                                                         '';
-                                                final otherUser =
-                                                    _userMap[otherUserId] ??
-                                                        {
-                                                          'id': otherUserId,
-                                                          'username': 'Unknown'
-                                                        };
+                                                final otherUserName =
+                                                    convo['username']
+                                                            ?.toString() ??
+                                                        'Unknown';
+                                                final otherUser = {
+                                                  'id': otherUserId,
+                                                  'username': otherUserName
+                                                };
+                                                debugPrint(
+                                                    'Navigating with otherUserId: $otherUserId, username: $otherUserName');
                                                 Navigator.push(
                                                   context,
                                                   MaterialPageRoute(
@@ -931,19 +902,6 @@ class _MessagesScreenState extends State<MessagesScreen> {
       ),
     );
   }
-
-  Future<String> _getGroupParticipants(List<String> participantIds) async {
-    try {
-      final users = await Future.wait(participantIds.map((id) async {
-        final doc =
-            await FirebaseFirestore.instance.collection('users').doc(id).get();
-        return doc.exists ? (doc.data()?['username'] ?? 'Unknown') : 'Unknown';
-      }));
-      return users.take(3).join(', ') + (users.length > 3 ? '...' : '');
-    } catch (e) {
-      return '';
-    }
-  }
 }
 
 class NewChatScreen extends StatefulWidget {
@@ -963,7 +921,8 @@ class NewChatScreen extends StatefulWidget {
 }
 
 class _NewChatScreenState extends State<NewChatScreen> {
-  List<String> _selectedUserIds = [];
+  Map<String, dynamic>? _selectedUser;
+  List<Map<String, dynamic>> _selectedUsers = [];
   String _groupName = '';
   bool _isGroupChat = false;
   final TextEditingController _groupNameController = TextEditingController();
@@ -976,31 +935,36 @@ class _NewChatScreenState extends State<NewChatScreen> {
 
   Future<void> _startChat() async {
     try {
-      if (_isGroupChat && _selectedUserIds.length < 2) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('Select at least 2 users for a group chat')),
-        );
-        return;
-      }
-      if (_isGroupChat && _groupName.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Enter a group name')),
-        );
-        return;
-      }
-
-      String convoId;
-      Map<String, dynamic> convoData;
-      Map<String, dynamic> otherUserData;
-
       if (_isGroupChat) {
-        convoId = DateTime.now().millisecondsSinceEpoch.toString();
+        if (_selectedUsers.length < 2) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text('Select at least 2 users for a group chat')),
+          );
+          return;
+        }
+        if (_groupName.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Enter a group name')),
+          );
+          return;
+        }
+        String convoId = DateTime.now().millisecondsSinceEpoch.toString();
         final participants = [
           widget.currentUser['id'].toString(),
-          ..._selectedUserIds
+          ..._selectedUsers.map((u) => u['id'].toString())
         ];
-        convoData = {
+        final participantsData = [
+          {
+            'id': widget.currentUser['id'].toString(),
+            'username': widget.currentUser['username'] ?? 'Unknown'
+          },
+          ..._selectedUsers.map((u) => {
+                'id': u['id'].toString(),
+                'username': u['username'] ?? 'Unknown'
+              })
+        ];
+        Map<String, dynamic> convoData = {
           'id': convoId,
           'type': 'group',
           'group_name': _groupName,
@@ -1010,24 +974,6 @@ class _NewChatScreenState extends State<NewChatScreen> {
           'blocked_users': [],
           'pinned_users': [],
         };
-        // Construct participantsData for GroupChatScreen
-        final participantsData = participants.map((id) {
-          if (id == widget.currentUser['id'].toString()) {
-            return {
-              'id': id,
-              'username': widget.currentUser['username'] ?? 'Unknown',
-            };
-          }
-          final user = widget.otherUsers.firstWhere(
-            (user) => user['id'].toString() == id,
-            orElse: () => {'id': id, 'username': 'Unknown'},
-          );
-          return {
-            'id': id,
-            'username': user['username'] ?? 'Unknown',
-          };
-        }).toList();
-
         Navigator.push(
           context,
           MaterialPageRoute(
@@ -1038,28 +984,25 @@ class _NewChatScreenState extends State<NewChatScreen> {
             ),
           ),
         );
+        await FirebaseFirestore.instance
+            .collection('conversations')
+            .doc(convoId)
+            .set(convoData, SetOptions(merge: true));
+        await AuthDatabase.instance.insertConversation(
+            {...convoData, 'timestamp': DateTime.now().toIso8601String()});
       } else {
-        if (_selectedUserIds.isEmpty) {
+        if (_selectedUser == null) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Select a user to start a chat')),
           );
           return;
         }
-        final otherUserId = _selectedUserIds.first;
-        final otherUser = widget.otherUsers.firstWhere(
-          (user) => user['id'].toString() == otherUserId,
-          orElse: () => {},
-        );
-        if (otherUser.isEmpty) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Selected user not found')),
-          );
-          return;
-        }
+        final otherUser = _selectedUser!;
+        final otherUserId = otherUser['id'].toString();
         final sortedIds = [widget.currentUser['id'].toString(), otherUserId]
           ..sort();
-        convoId = sortedIds.join('_');
-        convoData = {
+        String convoId = sortedIds.join('_');
+        Map<String, dynamic> convoData = {
           'id': convoId,
           'type': 'direct',
           'participants': [widget.currentUser['id'].toString(), otherUserId],
@@ -1070,32 +1013,27 @@ class _NewChatScreenState extends State<NewChatScreen> {
           'blocked_users': [],
           'pinned_users': [],
         };
-        otherUserData = {'id': otherUserId, 'username': otherUser['username']};
         Navigator.push(
           context,
           MaterialPageRoute(
             builder: (context) => IndividualChatScreen(
               currentUser: widget.currentUser,
-              otherUser: otherUserData,
+              otherUser: otherUser,
               storyInteractions: [],
             ),
           ),
         );
+        await FirebaseFirestore.instance
+            .collection('conversations')
+            .doc(convoId)
+            .set(convoData, SetOptions(merge: true));
+        await AuthDatabase.instance.insertConversation(
+            {...convoData, 'timestamp': DateTime.now().toIso8601String()});
       }
-
-      await FirebaseFirestore.instance
-          .collection('conversations')
-          .doc(convoId)
-          .set(convoData, SetOptions(merge: true));
-      await AuthDatabase.instance.insertConversation({
-        ...convoData,
-        'timestamp': DateTime.now().toIso8601String(),
-      });
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to start chat: $e')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Failed to start chat: $e')));
     }
   }
 
@@ -1117,7 +1055,8 @@ class _NewChatScreenState extends State<NewChatScreen> {
             onPressed: () {
               setState(() {
                 _isGroupChat = !_isGroupChat;
-                _selectedUserIds.clear();
+                _selectedUser = null;
+                _selectedUsers.clear();
                 _groupName = '';
                 _groupNameController.clear();
               });
@@ -1257,11 +1196,17 @@ class _NewChatScreenState extends State<NewChatScreen> {
                                           color: Colors.white));
                                 }
                                 final users = snapshot.data!.docs
-                                    .map((doc) =>
-                                        doc.data() as Map<String, dynamic>)
+                                    .map((doc) {
+                                      final data =
+                                          doc.data() as Map<String, dynamic>;
+                                      return {
+                                        'id': doc.id,
+                                        'username':
+                                            data['username'] ?? 'Unknown'
+                                      };
+                                    })
                                     .where((user) =>
-                                        user['id']?.toString() !=
-                                        widget.currentUser['id']?.toString())
+                                        user['id'] != widget.currentUser['id'])
                                     .toList();
                                 if (users.isEmpty) {
                                   return const Center(
@@ -1286,12 +1231,12 @@ class _NewChatScreenState extends State<NewChatScreen> {
                                       const Divider(color: Colors.white54),
                                   itemBuilder: (context, index) {
                                     final user = users[index];
-                                    final userId = user['id']?.toString();
-                                    final username =
-                                        user['username']?.toString() ??
-                                            'Unknown';
-                                    final isSelected =
-                                        _selectedUserIds.contains(userId);
+                                    final userId = user['id'].toString();
+                                    final isSelected = _isGroupChat
+                                        ? _selectedUsers
+                                            .any((u) => u['id'] == userId)
+                                        : _selectedUser != null &&
+                                            _selectedUser!['id'] == userId;
                                     return Container(
                                       decoration: BoxDecoration(
                                         borderRadius: BorderRadius.circular(12),
@@ -1318,15 +1263,17 @@ class _NewChatScreenState extends State<NewChatScreen> {
                                         leading: CircleAvatar(
                                           backgroundColor: widget.accentColor,
                                           child: Text(
-                                            username.isNotEmpty
-                                                ? username[0].toUpperCase()
+                                            user['username']?.isNotEmpty ??
+                                                    false
+                                                ? user['username'][0]
+                                                    .toUpperCase()
                                                 : '?',
                                             style: const TextStyle(
                                                 color: Colors.white),
                                           ),
                                         ),
                                         title: Text(
-                                          username,
+                                          user['username'],
                                           style: const TextStyle(
                                               color: Colors.white,
                                               shadows: [
@@ -1338,40 +1285,39 @@ class _NewChatScreenState extends State<NewChatScreen> {
                                         ),
                                         trailing: _isGroupChat
                                             ? Checkbox(
-                                                value: isSelected,
+                                                value: _selectedUsers.any(
+                                                    (u) => u['id'] == userId),
                                                 onChanged: (bool? value) {
                                                   setState(() {
                                                     if (value == true) {
-                                                      _selectedUserIds
-                                                          .add(userId!);
+                                                      _selectedUsers.add(user);
                                                     } else {
-                                                      _selectedUserIds
-                                                          .remove(userId);
+                                                      _selectedUsers
+                                                          .removeWhere((u) =>
+                                                              u['id'] ==
+                                                              userId);
                                                     }
                                                   });
                                                 },
                                                 activeColor: widget.accentColor,
                                               )
                                             : null,
-                                        onTap: userId != null
-                                            ? () {
-                                                setState(() {
-                                                  if (_isGroupChat) {
-                                                    if (_selectedUserIds
-                                                        .contains(userId)) {
-                                                      _selectedUserIds
-                                                          .remove(userId);
-                                                    } else {
-                                                      _selectedUserIds
-                                                          .add(userId);
-                                                    }
-                                                  } else {
-                                                    _selectedUserIds = [userId];
-                                                    _startChat();
-                                                  }
-                                                });
+                                        onTap: () {
+                                          setState(() {
+                                            if (_isGroupChat) {
+                                              if (_selectedUsers.any(
+                                                  (u) => u['id'] == userId)) {
+                                                _selectedUsers.removeWhere(
+                                                    (u) => u['id'] == userId);
+                                              } else {
+                                                _selectedUsers.add(user);
                                               }
-                                            : null,
+                                            } else {
+                                              _selectedUser = user;
+                                              _startChat();
+                                            }
+                                          });
+                                        },
                                       ),
                                     );
                                   },
