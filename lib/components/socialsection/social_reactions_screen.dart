@@ -5,7 +5,6 @@ import '../../models/reel.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:movie_app/helpers/movie_account_helper.dart';
-import 'package:movie_app/database/auth_database.dart';
 import 'package:movie_app/components/trending_movies_widget.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -272,13 +271,18 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
     try {
       final currentUser = FirebaseAuth.instance.currentUser;
       if (currentUser != null) {
-        final userData =
-            await AuthDatabase.instance.getUserById(currentUser.uid);
-        if (!mounted) return;
-        setState(() {
-          _currentUser = userData;
-        });
-        if (userData == null) {
+        final doc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(currentUser.uid)
+            .get();
+        if (doc.exists) {
+          final userData = doc.data()!;
+          userData['id'] = doc.id;
+          if (!mounted) return;
+          setState(() {
+            _currentUser = _normalizeUserData(userData);
+          });
+        } else {
           debugPrint('No user data found for UID: ${currentUser.uid}');
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text("User data not found")),
@@ -307,7 +311,13 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
 
   Future<void> _loadUsers() async {
     try {
-      final rawUsers = await AuthDatabase.instance.getUsers();
+      final snapshot =
+          await FirebaseFirestore.instance.collection('users').get();
+      final rawUsers = snapshot.docs.map((doc) {
+        final data = doc.data();
+        data['id'] = doc.id; // Add document ID
+        return data;
+      }).toList();
       debugPrint('Raw users: $rawUsers'); // Log raw data for inspection
       _users = rawUsers
           .map((u) => _normalizeUserData(Map<String, dynamic>.from(u)))
@@ -320,39 +330,19 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
 
   Map<String, dynamic> _normalizeUserData(Map<String, dynamic> user) {
     return {
-      'id': user['id'] is String ? user['id'] : user['id']?.toString() ?? '',
-      'username': user['username'] is String
-          ? user['username']
-          : user['username']?.toString() ?? 'Unknown',
-      'email': user['email'] is String
-          ? user['email']
-          : user['email']?.toString() ?? '',
-      'bio':
-          user['bio'] is String ? user['bio'] : user['bio']?.toString() ?? '',
-      'password': user['password'] is String
-          ? user['password']
-          : user['password']?.toString() ?? '',
-      'auth_provider': user['auth_provider'] is String
-          ? user['auth_provider']
-          : user['auth_provider']?.toString() ?? '',
-      'token': user['token'] is String
-          ? user['token']
-          : user['token']?.toString() ?? '',
-      'created_at': user['created_at'] is String
-          ? user['created_at']
-          : user['created_at']?.toString() ?? '',
-      'updated_at': user['updated_at'] is String
-          ? user['updated_at']
-          : user['updated_at']?.toString() ?? DateTime.now().toIso8601String(),
-      'followers_count': user['followers_count'] is String
-          ? user['followers_count']
-          : user['followers_count']?.toString() ?? '0',
-      'following_count': user['following_count'] is String
-          ? user['following_count']
-          : user['following_count']?.toString() ?? '0',
-      'avatar': user['avatar'] is String
-          ? user['avatar']
-          : user['avatar']?.toString() ?? 'https://via.placeholder.com/200',
+      'id': user['id']?.toString() ?? '',
+      'username': user['username']?.toString() ?? 'Unknown',
+      'email': user['email']?.toString() ?? '',
+      'bio': user['bio']?.toString() ?? '',
+      'password': user['password']?.toString() ?? '',
+      'auth_provider': user['auth_provider']?.toString() ?? '',
+      'token': user['token']?.toString() ?? '',
+      'created_at': user['created_at']?.toString() ?? '',
+      'updated_at':
+          user['updated_at']?.toString() ?? DateTime.now().toIso8601String(),
+      'followers_count': user['followers_count']?.toString() ?? '0',
+      'following_count': user['following_count']?.toString() ?? '0',
+      'avatar': user['avatar']?.toString() ?? 'https://via.placeholder.com/200',
     };
   }
 
@@ -526,6 +516,7 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
               _stories.add(story);
               final newPost = {
                 'user': user,
+                'userId': _currentUser?['id']?.toString() ?? '',
                 'post': '$user posted a story.',
                 'type': 'story',
                 'likedBy': [],
@@ -836,30 +827,35 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
               if (!snapshot.hasData) {
                 return const Center(child: CircularProgressIndicator());
               }
+
               final posts = snapshot.data!.docs.map((doc) {
-                final data = doc.data() as Map<String, dynamic>;
+                final data = doc.data()! as Map<String, dynamic>;
                 return {
                   'id': doc.id,
-                  'user': data['user']?.toString() ?? 'Unknown',
-                  'post': data['post']?.toString() ?? '',
-                  'type': data['type']?.toString() ?? '',
-                  'likedBy': data['likedBy'] is List
-                      ? List<String>.from(data['likedBy'] ?? [])
-                      : [],
-                  'title': data['title']?.toString() ?? '',
-                  'season': data['season']?.toString() ?? '',
-                  'episode': data['episode']?.toString() ?? '',
-                  'media': data['media']?.toString(), // Can be null
-                  'mediaType': data['mediaType']?.toString() ?? '',
-                  'timestamp': data['timestamp']?.toString() ?? '',
-                  'userId': data['userId']?.toString() ?? '',
+                  'user': (data['user'] as String?) ?? '',
+                  'post': (data['post'] as String?) ?? '',
+                  'type': (data['type'] as String?) ?? '',
+                  'likedBy': (data['likedBy'] as List?)
+                          ?.where((item) => item != null)
+                          .map((item) => item.toString())
+                          .toList() ??
+                      [],
+                  'title': (data['title'] as String?) ?? '',
+                  'season': (data['season'] as String?) ?? '',
+                  'episode': (data['episode'] as String?) ?? '',
+                  'media': (data['media'] as String?) ?? '',
+                  'mediaType': (data['mediaType'] as String?) ?? '',
+                  'timestamp': (data['timestamp'] as String?) ?? '',
+                  'userId': (data['userId'] as String?) ?? '',
                 };
               }).toList();
+
               if (posts.isEmpty) {
                 return const Center(
                     child: Text("No posts available.",
                         style: TextStyle(color: Colors.white)));
               }
+
               return ListView.builder(
                 controller: _scrollController,
                 padding:
@@ -922,22 +918,39 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
   }
 
   Widget _buildPostCard(
-      Map<String, dynamic> post, List<Map<String, dynamic>> allPosts) {
-    final user = _users.firstWhere((u) => u['username'] == post['user'],
-        orElse: () => {
-              'username': post['user'],
-              'avatar': 'https://source.unsplash.com/random/200x200/?face'
-            });
-    final likedBy = List<String>.from(post['likedBy'] ?? []);
-    final isLiked = likedBy.contains(_currentUser?['id']);
+    Map<String, dynamic> post,
+    List<Map<String, dynamic>> allPosts,
+  ) {
+    final id = post['id'] as String? ?? '';
+    final userName = post['user'] as String? ?? 'Unknown';
+    final message = post['post'] as String? ?? '';
+    final likedBy = (post['likedBy'] as List?)
+            ?.where((item) => item != null)
+            .map((item) => item.toString())
+            .toList() ??
+        [];
+    final title = post['title'] as String? ?? '';
+    final season = post['season'] as String? ?? '';
+    final episode = post['episode'] as String? ?? '';
+    final media = post['media'] as String? ?? '';
+    final mediaType = post['mediaType'] as String? ?? '';
+    final userId = post['userId'] as String? ?? '';
+    // 2) Lookup user record
+    final userRecord = _users.firstWhere(
+      (u) => (u['id'] as String?) == userId,
+      orElse: () => {'username': userName, 'avatar': ''},
+    );
+    final username = userRecord['username'] as String? ?? 'Unknown';
+    final initial = username.isNotEmpty ? username[0].toUpperCase() : '?';
+    final avatarUrl = userRecord['avatar'] as String? ?? '';
 
-    bool isValidImageUrl(String? url) {
-      if (url == null || url.isEmpty) return false;
-      return url.startsWith('http') &&
-          (url.endsWith('.jpg') ||
-              url.endsWith('.png') ||
-              url.endsWith('.jpeg'));
-    }
+    // 3) Like state
+    final isLiked = likedBy.contains((_currentUser?['id'] as String?) ?? '');
+
+    // 4) URL validator
+    bool isValidImageUrl(String url) =>
+        url.startsWith('http') &&
+        (url.endsWith('.jpg') || url.endsWith('.jpeg') || url.endsWith('.png'));
 
     return Card(
       elevation: 4,
@@ -945,73 +958,84 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
       margin: const EdgeInsets.symmetric(vertical: 8),
       child: Container(
         decoration: BoxDecoration(
-          gradient: LinearGradient(colors: [
-            widget.accentColor.withOpacity(0.1),
-            widget.accentColor.withOpacity(0.3)
-          ], begin: Alignment.topLeft, end: Alignment.bottomRight),
+          gradient: LinearGradient(
+            colors: [
+              widget.accentColor.withOpacity(0.1),
+              widget.accentColor.withOpacity(0.3),
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
           borderRadius: BorderRadius.circular(12),
           border: Border.all(color: widget.accentColor.withOpacity(0.3)),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Avatar + username
             ListTile(
               leading: CircleAvatar(
-                  backgroundImage: NetworkImage(user['avatar']), radius: 20),
-              title: Text(post['user'] ?? 'Unknown',
-                  style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                      shadows: [
-                        Shadow(
-                            color: Colors.black45,
-                            offset: Offset(1, 1),
-                            blurRadius: 2)
-                      ])),
+                radius: 20,
+                backgroundImage:
+                    avatarUrl.isNotEmpty ? NetworkImage(avatarUrl) : null,
+                child:
+                    Text(initial, style: const TextStyle(color: Colors.white)),
+              ),
+              title: Text(
+                username,
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                  shadows: [
+                    Shadow(
+                        color: Colors.black45,
+                        offset: Offset(1, 1),
+                        blurRadius: 2)
+                  ],
+                ),
+              ),
             ),
-            if (post['media'] != null && post['media']!.isNotEmpty)
-              if (post['mediaType'] == 'photo' &&
-                  isValidImageUrl(post['media'] as String?))
+
+            // Photo or video
+            if (media.isNotEmpty)
+              if (mediaType == 'photo' && isValidImageUrl(media))
                 CachedNetworkImage(
-                  imageUrl: post['media'] as String,
-                  height: 250,
+                  imageUrl: media,
+                  height: 300,
                   width: double.infinity,
                   fit: BoxFit.cover,
-                  placeholder: (context, url) =>
+                  placeholder: (c, u) =>
                       const Center(child: CircularProgressIndicator()),
-                  errorWidget: (context, url, error) => Container(
-                    height: 250,
-                    color: Colors.grey[300],
-                    child:
-                        const Center(child: Icon(Icons.broken_image, size: 40)),
-                  ),
+                  errorWidget: (c, u, e) => Container(
+                      height: 300,
+                      color: Colors.grey[300],
+                      child: const Icon(Icons.broken_image, size: 40)),
                 )
-              else if (post['mediaType'] == 'video' && post['media'] != null)
-                Container(
-                  height: 250,
+              else if (mediaType == 'video')
+                SizedBox(
+                  height: 300,
                   child: VideoPlayer(
-                    videoUrl: post['media'] as String,
+                    videoUrl: media,
                     autoPlay: true,
                     onTap: () {
                       final videoPosts = allPosts
                           .where((p) =>
-                              p['mediaType'] == 'video' && p['media'] != null)
+                              (p['mediaType'] as String?) == 'video' &&
+                              (p['media'] as String?)?.isNotEmpty == true)
                           .map((p) => Reel(
-                                videoUrl: p['media'] as String,
-                                movieTitle: p['title'] ?? 'Video',
-                                movieDescription: p['post'] ?? '',
+                                videoUrl: (p['media'] as String?) ?? '',
+                                movieTitle: (p['title'] as String?) ?? 'Video',
+                                movieDescription: (p['post'] as String?) ?? '',
                               ))
                           .toList();
-                      final initialIndex = videoPosts
-                          .indexWhere((reel) => reel.videoUrl == post['media']);
-                      if (initialIndex != -1) {
+                      final idx =
+                          videoPosts.indexWhere((r) => r.videoUrl == media);
+                      if (idx != -1) {
                         Navigator.push(
                           context,
                           MaterialPageRoute(
                             builder: (_) => FeedReelPlayerScreen(
-                              reels: videoPosts,
-                              initialIndex: initialIndex,
-                            ),
+                                reels: videoPosts, initialIndex: idx),
                           ),
                         );
                       }
@@ -1020,113 +1044,116 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
                 )
               else
                 Container(
-                  height: 250,
-                  color: Colors.grey[300],
-                  child: const Center(child: Icon(Icons.image, size: 40)),
-                ),
+                    height: 300,
+                    color: Colors.grey[300],
+                    child: const Center(child: Icon(Icons.image, size: 40))),
+
+            // Text + meta
             Padding(
               padding: const EdgeInsets.all(12),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(post['post'] ?? '',
+                  Text(message,
                       style:
                           const TextStyle(fontSize: 15, color: Colors.white70)),
-                  if ((post['season']?.isNotEmpty ?? false)) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                        "Season: ${post['season']}, Episode: ${post['episode'] ?? 'N/A'}",
+                  if (season.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        "Season: $season, Episode: ${episode.isNotEmpty ? episode : 'N/A'}",
                         style: const TextStyle(
-                            fontStyle: FontStyle.italic, color: Colors.white70))
-                  ],
-                  if ((post['title']?.isNotEmpty ?? false)) ...[
-                    const SizedBox(height: 8),
-                    Text("Movie: ${post['title'] ?? 'Unknown'}",
-                        style: const TextStyle(
-                            fontStyle: FontStyle.italic, color: Colors.white70))
-                  ]
+                            fontStyle: FontStyle.italic, color: Colors.white70),
+                      ),
+                    ),
+                  if (title.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text("Movie: $title",
+                          style: const TextStyle(
+                              fontStyle: FontStyle.italic,
+                              color: Colors.white70)),
+                    ),
                 ],
               ),
             ),
+
             const Divider(color: Colors.white54, height: 1),
-            Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
-              GestureDetector(
-                onTap: () async {
-                  try {
+
+            // Actions
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                // Like
+                GestureDetector(
+                  onTap: () async {
+                    final ref =
+                        FirebaseFirestore.instance.collection('feeds').doc(id);
                     if (isLiked) {
-                      await FirebaseFirestore.instance
-                          .collection('feeds')
-                          .doc(post['id'])
-                          .update({
-                        'likedBy': FieldValue.arrayRemove([_currentUser?['id']])
+                      await ref.update({
+                        'likedBy': FieldValue.arrayRemove(
+                            [(_currentUser?['id'] as String?) ?? ''])
                       });
                     } else {
-                      await FirebaseFirestore.instance
-                          .collection('feeds')
-                          .doc(post['id'])
-                          .update({
-                        'likedBy': FieldValue.arrayUnion([_currentUser?['id']])
+                      await ref.update({
+                        'likedBy': FieldValue.arrayUnion(
+                            [(_currentUser?['id'] as String?) ?? ''])
                       });
-                    }
-                  } catch (e) {
-                    debugPrint('Error updating like: $e');
-                  }
-                },
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      isLiked ? Icons.favorite : Icons.favorite_border,
-                      color: isLiked ? Colors.red : Colors.white70,
-                      size: 22,
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      likedBy.length.toString(),
-                      style:
-                          const TextStyle(color: Colors.white70, fontSize: 14),
-                    ),
-                  ],
-                ),
-              ),
-              IconButton(
-                icon:
-                    const Icon(Icons.comment, color: Colors.white70, size: 22),
-                onPressed: () => _showComments(post),
-              ),
-              IconButton(
-                icon: const Icon(Icons.share, color: Colors.white70, size: 22),
-                onPressed: () => _sharePost(post),
-              ),
-              IconButton(
-                icon: const Icon(Icons.send, color: Colors.white70, size: 22),
-                onPressed: () {
-                  String code = _generateWatchCode();
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                      content: Text("Started Watch Party: Code $code")));
-                  _notifications.add(
-                      "${_currentUser?['username'] ?? 'CurrentUser'} started a watch party with code $code");
-                },
-              ),
-              if (post['userId'] == _currentUser?['id'])
-                IconButton(
-                  icon: const Icon(Icons.delete, color: Colors.red, size: 22),
-                  onPressed: () async {
-                    try {
-                      await FirebaseFirestore.instance
-                          .collection('feeds')
-                          .doc(post['id'])
-                          .delete();
-                      setState(() {
-                        _feedPosts.removeWhere((p) => p['id'] == post['id']);
-                      });
-                      await _saveFeedPostsToLocal();
-                    } catch (e) {
-                      debugPrint('Error deleting post: $e');
                     }
                   },
+                  child: Row(
+                    children: [
+                      Icon(isLiked ? Icons.favorite : Icons.favorite_border,
+                          color: isLiked ? Colors.red : Colors.white70,
+                          size: 22),
+                      const SizedBox(width: 4),
+                      Text(likedBy.length.toString(),
+                          style: const TextStyle(
+                              color: Colors.white70, fontSize: 14)),
+                    ],
+                  ),
                 ),
-            ]),
+
+                // Comment
+                IconButton(
+                    icon: const Icon(Icons.comment,
+                        color: Colors.white70, size: 22),
+                    onPressed: () => _showComments(post)),
+
+                // Share
+                IconButton(
+                    icon: const Icon(Icons.share,
+                        color: Colors.white70, size: 22),
+                    onPressed: () => _sharePost(post)),
+
+                // Send / watch party
+                IconButton(
+                  icon: const Icon(Icons.send, color: Colors.white70, size: 22),
+                  onPressed: () {
+                    final code = _generateWatchCode();
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                        content: Text("Started Watch Party: Code $code")));
+                    _notifications.add(
+                        "${(_currentUser?['username'] as String?) ?? 'CurrentUser'} started a watch party with code $code");
+                  },
+                ),
+
+                // Delete (owner only)
+                if (userId == ((_currentUser?['id'] as String?) ?? ''))
+                  IconButton(
+                    icon: const Icon(Icons.delete, color: Colors.red, size: 22),
+                    onPressed: () async {
+                      await FirebaseFirestore.instance
+                          .collection('feeds')
+                          .doc(id)
+                          .delete();
+                      setState(
+                          () => _feedPosts.removeWhere((p) => p['id'] == id));
+                      await _saveFeedPostsToLocal();
+                    },
+                  ),
+              ],
+            ),
           ],
         ),
       ),
@@ -1182,6 +1209,14 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
                   final userId = groupedStories.keys.elementAt(index);
                   final userStories = groupedStories[userId]!;
                   final firstStory = userStories.first;
+                  final mediaUrl = firstStory['media'] as String?;
+                  final isValidPhotoUrl = mediaUrl != null &&
+                      mediaUrl.isNotEmpty &&
+                      (mediaUrl.startsWith('http') &&
+                          (mediaUrl.endsWith('.jpg') ||
+                              mediaUrl.endsWith('.png') ||
+                              mediaUrl.endsWith('.jpeg')));
+
                   return Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 8),
                     child: GestureDetector(
@@ -1203,10 +1238,12 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
                             height: 64,
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
-                              image: firstStory['type'] == 'photo'
+                              image: firstStory['type'] == 'photo' &&
+                                      isValidPhotoUrl
                                   ? DecorationImage(
-                                      image: NetworkImage(firstStory['media']),
-                                      fit: BoxFit.cover)
+                                      image: NetworkImage(mediaUrl),
+                                      fit: BoxFit.cover,
+                                    )
                                   : null,
                               color: firstStory['type'] == 'video'
                                   ? Colors.black
@@ -1497,7 +1534,8 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
                     ),
                   )
                 : ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text("User data not loaded"))),
+                    const SnackBar(content: Text("User data not loaded")),
+                  ),
           ),
           IconButton(
             icon: const Icon(Icons.search, color: Colors.white, size: 22),
