@@ -18,6 +18,7 @@ class MessageWidget extends StatefulWidget {
   final Function(String?) setCurrentlyPlaying;
   final String? currentlyPlayingId;
   final encrypt.Encrypter encrypter;
+  final bool isRead;
 
   const MessageWidget({
     Key? key,
@@ -33,6 +34,7 @@ class MessageWidget extends StatefulWidget {
     required this.setCurrentlyPlaying,
     required this.currentlyPlayingId,
     required this.encrypter,
+    required this.isRead,
   }) : super(key: key);
 
   @override
@@ -54,6 +56,26 @@ class _MessageWidgetState extends State<MessageWidget> {
     final messageTime = DateTime.parse(widget.message['created_at'].toString());
     final formattedTime = DateFormat('h:mm a').format(messageTime);
     final messageType = widget.message['type']?.toString() ?? 'text';
+
+    // Define tick widget for sent messages
+    Widget tickWidget = widget.isMe
+        ? Padding(
+            padding: const EdgeInsets.only(left: 4.0),
+            child: Icon(
+              widget.isRead
+                  ? Icons.done_all
+                  : widget.message['delivered_at'] != null
+                      ? Icons.done_all
+                      : Icons.done,
+              size: 16,
+              color: widget.isRead
+                  ? Colors.blue
+                  : widget.message['delivered_at'] != null
+                      ? Colors.grey
+                      : Colors.grey[400],
+            ),
+          )
+        : Container();
 
     Widget content;
     switch (messageType) {
@@ -80,28 +102,15 @@ class _MessageWidgetState extends State<MessageWidget> {
                       fontWeight: FontWeight.bold),
                 ),
               ),
-            if (widget.isMe)
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                      widget.message['read_at'] != null
-                          ? Icons.done_all
-                          : widget.message['delivered_at'] != null
-                              ? Icons.done_all
-                              : Icons.done,
-                      size: 16,
-                      color: widget.message['read_at'] != null
-                          ? Colors.blue
-                          : Colors.grey),
-                  const SizedBox(width: 4),
-                  Text(formattedTime,
-                      style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                ],
-              )
-            else
-              Text(formattedTime,
-                  style: const TextStyle(fontSize: 12, color: Colors.grey)),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (widget.isMe) tickWidget,
+                if (widget.isMe) const SizedBox(width: 4),
+                Text(formattedTime,
+                    style: const TextStyle(fontSize: 12, color: Colors.grey)),
+              ],
+            ),
           ],
         );
         break;
@@ -163,28 +172,15 @@ class _MessageWidgetState extends State<MessageWidget> {
                       fontWeight: FontWeight.bold),
                 ),
               ),
-            if (widget.isMe)
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                      widget.message['read_at'] != null
-                          ? Icons.done_all
-                          : widget.message['delivered_at'] != null
-                              ? Icons.done_all
-                              : Icons.done,
-                      size: 16,
-                      color: widget.message['read_at'] != null
-                          ? Colors.blue
-                          : Colors.grey),
-                  const SizedBox(width: 4),
-                  Text(formattedTime,
-                      style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                ],
-              )
-            else
-              Text(formattedTime,
-                  style: const TextStyle(fontSize: 12, color: Colors.grey)),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (widget.isMe) tickWidget,
+                if (widget.isMe) const SizedBox(width: 4),
+                Text(formattedTime,
+                    style: const TextStyle(fontSize: 12, color: Colors.grey)),
+              ],
+            ),
           ],
         );
         break;
@@ -198,7 +194,7 @@ class _MessageWidgetState extends State<MessageWidget> {
               Expanded(
                   child: Text(
                       'Document ${widget.message['message'].split('/').last.toString()}',
-                      style: const TextStyle(color: Colors.white)))
+                      style: const TextStyle(color: Colors.white))),
             ]),
             if (!widget.isMe && widget.message['sender_username'] != null)
               Padding(
@@ -211,27 +207,15 @@ class _MessageWidgetState extends State<MessageWidget> {
                       fontWeight: FontWeight.bold),
                 ),
               ),
-            if (widget.isMe)
-              Row(
-                children: [
-                  Icon(
-                      widget.message['read_at'] != null
-                          ? Icons.done_all
-                          : widget.message['delivered_at'] != null
-                              ? Icons.done_all
-                              : Icons.done,
-                      size: 16,
-                      color: widget.message['read_at'] != null
-                          ? Colors.blue
-                          : Colors.grey),
-                  const SizedBox(width: 4),
-                  Text(formattedTime,
-                      style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                ],
-              )
-            else
-              Text(formattedTime,
-                  style: const TextStyle(fontSize: 12, color: Colors.grey)),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (widget.isMe) tickWidget,
+                if (widget.isMe) const SizedBox(width: 4),
+                Text(formattedTime,
+                    style: const TextStyle(fontSize: 12, color: Colors.grey)),
+              ],
+            ),
           ],
         );
         break;
@@ -272,28 +256,15 @@ class _MessageWidgetState extends State<MessageWidget> {
                   fontSize: 14,
                   color: widget.isMe ? Colors.white : Colors.black87),
             ),
-            if (widget.isMe)
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                      widget.message['read_at'] != null
-                          ? Icons.done_all
-                          : widget.message['delivered_at'] != null
-                              ? Icons.done_all
-                              : Icons.done,
-                      size: 16,
-                      color: widget.message['read_at'] != null
-                          ? Colors.blue
-                          : Colors.grey),
-                  const SizedBox(width: 4),
-                  Text(formattedTime,
-                      style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                ],
-              )
-            else
-              Text(formattedTime,
-                  style: const TextStyle(fontSize: 12, color: Colors.grey)),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (widget.isMe) tickWidget,
+                if (widget.isMe) const SizedBox(width: 4),
+                Text(formattedTime,
+                    style: const TextStyle(fontSize: 12, color: Colors.grey)),
+              ],
+            ),
             if (widget.message['is_pinned'] == true)
               const Padding(
                   padding: EdgeInsets.only(top: 4),
