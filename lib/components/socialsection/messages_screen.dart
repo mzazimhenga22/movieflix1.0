@@ -9,6 +9,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:ui' as ui;
 import 'dart:async';
 import 'package:encrypt/encrypt.dart' as encrypt;
+import 'package:crypto/crypto.dart'; // Added for sha256
+import 'dart:convert'; // For utf8 encoding
+import 'dart:typed_data';
 
 class MessagesScreen extends StatefulWidget {
   final Map<String, dynamic> currentUser;
@@ -29,7 +32,6 @@ class _MessagesScreenState extends State<MessagesScreen> {
   StreamSubscription<QuerySnapshot>? _convoSubscription;
   String? _errorMessage;
   late Map<String, Map<String, dynamic>> _userMap;
-  late encrypt.Encrypter _encrypter; // Encrypter for decryption
 
   @override
   void initState() {
@@ -37,9 +39,6 @@ class _MessagesScreenState extends State<MessagesScreen> {
     _userMap = {
       for (var user in widget.otherUsers) user['id'].toString(): user
     };
-    // Initialize _encrypter (this should be properly set up in your app)
-    // For this example, assume it's injected or initialized elsewhere
-    // Example: _encrypter = encrypt.Encrypter(encrypt.AES(encrypt.Key.fromLength(32)));
     _loadConversations();
     _setupFirestoreListener();
   }
@@ -48,6 +47,13 @@ class _MessagesScreenState extends State<MessagesScreen> {
   void dispose() {
     _convoSubscription?.cancel();
     super.dispose();
+  }
+
+  // Helper method to generate an encrypter for a specific conversation ID
+  encrypt.Encrypter _getEncrypter(String conversationId) {
+    final keyBytes = sha256.convert(utf8.encode(conversationId)).bytes;
+    final key = encrypt.Key(Uint8List.fromList(keyBytes));
+    return encrypt.Encrypter(encrypt.AES(key));
   }
 
   Future<void> _loadConversations() async {
@@ -77,7 +83,8 @@ class _MessagesScreenState extends State<MessagesScreen> {
                 ?.map((id) => id.toString())
                 .toList() ??
             [];
-        final participantsData = participantIds.map((id) => userMap[id]!).toList();
+        final participantsData =
+            participantIds.map((id) => userMap[id]!).toList();
         final unreadCount = await AuthDatabase.instance
             .getUnreadCount(convo['id'], widget.currentUser['id']);
         final lastMessageData = await _getLastMessage(convo['id']);
@@ -88,7 +95,8 @@ class _MessagesScreenState extends State<MessagesScreen> {
           'last_message': lastMessageData['message'] ?? 'No messages yet',
           'last_message_sender': lastMessageData['sender_username'] ?? '',
           'last_message_is_read': lastMessageData['is_read'] ?? false,
-          'last_message_timestamp': lastMessageData['timestamp'] ?? DateTime.now(),
+          'last_message_timestamp':
+              lastMessageData['timestamp'] ?? DateTime.now(),
         };
       }).toList());
 
@@ -144,7 +152,8 @@ class _MessagesScreenState extends State<MessagesScreen> {
         if (messageData['type'] == 'text' && messageData['iv'] != null) {
           try {
             final iv = encrypt.IV.fromBase64(messageData['iv']);
-            messageText = _encrypter.decrypt64(messageText, iv: iv);
+            final encrypter = _getEncrypter(convoId);
+            messageText = encrypter.decrypt64(messageText, iv: iv);
           } catch (e) {
             debugPrint('Error decrypting message: $e');
             messageText = '[Decryption Failed]';
