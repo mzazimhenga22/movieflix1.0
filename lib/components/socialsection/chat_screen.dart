@@ -103,16 +103,14 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
     _initializeLocalDatabase();
     _initializeNotifications();
 
-    List<Map<String, dynamic>>? FirestoreMessages;
-
     _loadMessages().then((_) {
-      FirestoreMessages = List<Map<String, dynamic>>.from(_messages);
       _markAllMessagesAsRead();
       WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
-      if (FirestoreMessages != null && FirestoreMessages!.isNotEmpty) {
-        print("Loaded ${FirestoreMessages!.length} messages");
+      if (_messages.isNotEmpty) {
+        print("Loaded ${_messages.length} messages");
       }
     });
+    _loadBackgroundSettings();
 
     _listenToFirestoreMessages();
 
@@ -172,13 +170,33 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
   }
 
   Future<void> _initializeLocalDatabase() async {
-    _localDb =
-        await openDatabase('chat.db', version: 1, onCreate: (db, version) {
-      db.execute(
-          'CREATE TABLE offline_messages (id TEXT PRIMARY KEY, data TEXT)');
-      db.execute(
-          'CREATE TABLE drafts (conversation_id TEXT PRIMARY KEY, content TEXT)');
+    _localDb = await openDatabase('chat.db', version: 1, onCreate: (db, version) {
+      db.execute('CREATE TABLE offline_messages (id TEXT PRIMARY KEY, data TEXT)');
+      db.execute('CREATE TABLE drafts (conversation_id TEXT PRIMARY KEY, content TEXT)');
+      db.execute('CREATE TABLE chat_settings (conversation_id TEXT PRIMARY KEY, bg_color INTEGER, bg_image TEXT, cinematic_theme TEXT)');
     });
+  }
+
+  Future<void> _loadBackgroundSettings() async {
+    final conversationId = _getConversationId();
+    final settings = await _localDb!.query('chat_settings',
+        where: 'conversation_id = ?', whereArgs: [conversationId]);
+    if (settings.isNotEmpty) {
+      final setting = settings.first;
+      setState(() {
+        _chatBgColor = setting['bg_color'] != null
+            ? Color(setting['bg_color'] as int)
+            : Colors.white;
+        _chatBgImage = setting['bg_image'] as String?;
+        _cinematicTheme = setting['cinematic_theme'] as String?;
+      });
+    } else {
+      setState(() {
+        _chatBgColor = Colors.white;
+        _chatBgImage = null;
+        _cinematicTheme = null;
+      });
+    }
   }
 
   Future<void> _initializeNotifications() async {
@@ -772,12 +790,33 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
   }
 
   void _updateChatBackground(
-      {Color? color, String? imageUrl, String? cinematicTheme}) {
-    setState(() {
-      if (color != null) _chatBgColor = color;
-      if (imageUrl != null) _chatBgImage = imageUrl;
-      if (cinematicTheme != null) _cinematicTheme = cinematicTheme;
-    });
+      {Color? color, String? imageUrl, String? cinematicTheme}) async {
+    final conversationId = _getConversationId();
+    final currentSettings = await _localDb!.query('chat_settings',
+        where: 'conversation_id = ?', whereArgs: [conversationId]);
+
+    Map<String, dynamic> settings = currentSettings.isNotEmpty
+        ? currentSettings.first
+        : {'conversation_id': conversationId};
+
+    if (color != null) {
+      settings['bg_color'] = color.value;
+      setState(() => _chatBgColor = color);
+    }
+    if (imageUrl != null) {
+      settings['bg_image'] = imageUrl;
+      setState(() => _chatBgImage = imageUrl);
+    }
+    if (cinematicTheme != null) {
+      settings['cinematic_theme'] = cinematicTheme;
+      setState(() => _cinematicTheme = cinematicTheme);
+    }
+
+    await _localDb!.insert(
+      'chat_settings',
+      settings,
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
   }
 
   void _deleteMessage(int index) async {
@@ -1713,4 +1752,3 @@ class _WebRTCCallWidgetState extends State<WebRTCCallWidget> {
     );
   }
 }
-
