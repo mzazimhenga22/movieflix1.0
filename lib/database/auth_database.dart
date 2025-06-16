@@ -130,26 +130,27 @@ class AuthDatabase {
           .execute('CREATE INDEX idx_profiles_user_id ON profiles(user_id)');
 
       await db.execute('''
-        CREATE TABLE messages (
-          id $idType,
-          sender_id TEXT NOT NULL,
-          receiver_id TEXT NOT NULL,
-          message $textType,
-          iv TEXT,
-          created_at TEXT,
-          is_read INTEGER NOT NULL DEFAULT 0,
-          is_pinned INTEGER NOT NULL DEFAULT 0,
-          replied_to TEXT,
-          type TEXT DEFAULT 'text',
-          firestore_id TEXT,
-          reactions TEXT DEFAULT '{}',
-          delivered_at TEXT,
-          read_at TEXT,
-          scheduled_at TEXT,
-          delete_after TEXT,
-          FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE,
-          FOREIGN KEY (receiver_id) REFERENCES users(id) ON DELETE CASCADE
-        )
+CREATE TABLE messages (
+  id TEXT PRIMARY KEY,
+  sender_id TEXT NOT NULL,
+  receiver_id TEXT,  -- No foreign key constraint
+  conversation_id TEXT NOT NULL,
+  message TEXT NOT NULL,
+  iv TEXT,
+  created_at TEXT,
+  is_read INTEGER NOT NULL DEFAULT 0,
+  is_pinned INTEGER NOT NULL DEFAULT 0,
+  replied_to TEXT,
+  type TEXT DEFAULT 'text',
+  firestore_id TEXT,
+  reactions TEXT DEFAULT '{}',
+  delivered_at TEXT,
+  read_at TEXT,
+  scheduled_at TEXT,
+  delete_after TEXT,
+  FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+)
       ''');
 
       await db.execute('''
@@ -762,6 +763,9 @@ class AuthDatabase {
 
   Future<Map<String, dynamic>?> getActiveProfileByUserId(String userId) async {
     try {
+      // Step 1: Check local database first
+      Map<String, dynamic>? localProfile;
+
       if (kIsWeb) {
         final finder = sembast.Finder(
           filter: sembast.Filter.and([
@@ -773,11 +777,9 @@ class AuthDatabase {
         final record =
             await _profileStore.findFirst(await database, finder: finder);
         if (record != null) {
-          final profileData = Map<String, dynamic>.from(record.value);
-          profileData['id'] = record.key;
-          return profileData;
+          localProfile = Map<String, dynamic>.from(record.value);
+          localProfile['id'] = record.key;
         }
-        return null;
       } else {
         final db = await database as sqflite.Database;
         final result = await db.query(
@@ -788,12 +790,35 @@ class AuthDatabase {
           limit: 1,
         );
         if (result.isNotEmpty) {
-          final profileData = Map<String, dynamic>.from(result.first);
-          profileData['id'] = profileData['id'].toString();
-          return profileData;
+          localProfile = Map<String, dynamic>.from(result.first);
+          localProfile['id'] = localProfile['id'].toString();
         }
-        return null;
       }
+
+      // Step 2: If found locally, return it
+      if (localProfile != null) {
+        return localProfile;
+      }
+
+      // Step 3: If not found locally, query Firestore
+      final snapshot = await _firestore
+          .collection('profiles')
+          .where('user_id', isEqualTo: userId)
+          .where('locked', isEqualTo: 0)
+          .orderBy('created_at')
+          .limit(1)
+          .get();
+
+      if (snapshot.docs.isNotEmpty) {
+        final profileData = snapshot.docs.first.data();
+        profileData['id'] = snapshot.docs.first.id;
+        // Insert into local database to keep it in sync
+        await _insertOrUpdateProfile(profileData);
+        return profileData;
+      }
+
+      // Step 4: If not found in Firestore either, return null
+      return null;
     } catch (e) {
       debugPrint('Failed to fetch active profile: $e');
       throw Exception('Failed to fetch active profile: $e');
@@ -832,55 +857,75 @@ class AuthDatabase {
     }
   }
 
-  Future<String> createMessage(Map<String, dynamic> message) async {
-    final messageId = message['id']?.toString() ?? _uuid.v4();
-    if (await _messageExists(messageId)) return messageId;
+Future<String> createMessage(Map<String, dynamic> message) async {
+  final messageId = message['id']?.toString() ?? _uuid.v4();
+  if (await _messageExists(messageId)) return messageId;
 
-    final messageData = _normalizeMessageData({
-      ...message,
-      'id': messageId,
-      'created_at': DateTime.now().toIso8601String(),
-    });
+  final messageData = _normalizeMessageData({
+    ...message,
+    'id': messageId,
+    'created_at': DateTime.now().toIso8601String(),
+  });
 
-    if (messageData['sender_id'].isEmpty ||
-        messageData['receiver_id'].isEmpty) {
-      throw Exception('sender_id and receiver_id cannot be empty');
-    }
-
-    try {
-      final sortedIds = [messageData['sender_id'], messageData['receiver_id']]
-        ..sort();
-      final conversationId = sortedIds.join('_');
-      await _firestore
-          .collection('conversations')
-          .doc(conversationId)
-          .collection('messages')
-          .doc(messageId)
-          .set({
-        'id': messageId,
-        'sender_id': messageData['sender_id'],
-        'receiver_id': messageData['receiver_id'],
-        'message': messageData['message'],
-        'iv': messageData['iv'],
-        'timestamp': firestore.FieldValue.serverTimestamp(),
-        'is_read': messageData['is_read'] == 1,
-        'is_pinned': messageData['is_pinned'] == 1,
-        'replied_to': messageData['replied_to'],
-        'type': messageData['type'],
-        'reactions': messageData['reactions'] ?? {},
-        'delivered_at': messageData['delivered_at'],
-        'read_at': messageData['read_at'],
-        'scheduled_at': messageData['scheduled_at'],
-        'delete_after': messageData['delete_after'],
-      }, firestore.SetOptions(merge: true));
-
-      await _insertOrUpdateMessage(messageData);
-      return messageId;
-    } catch (e) {
-      debugPrint('Failed to create message: $e');
-      throw Exception('Failed to create message: $e');
-    }
+  if (messageData['sender_id'].isEmpty) {
+    throw Exception('sender_id cannot be empty');
   }
+
+  try {
+    final conversationId = messageData['conversation_id'];
+    if (conversationId == null || conversationId.isEmpty) {
+      throw Exception('conversation_id is required');
+    }
+    await _firestore
+        .collection('conversations')
+        .doc(conversationId)
+        .collection('messages')
+        .doc(messageId)
+        .set({
+      'id': messageId,
+      'sender_id': messageData['sender_id'],
+      'receiver_id': messageData['receiver_id'],
+      'conversation_id': conversationId,
+      'message': messageData['message'],
+      'iv': messageData['iv'],
+      'timestamp': firestore.FieldValue.serverTimestamp(),
+      'is_read': messageData['is_read'] == 1,
+      'is_pinned': messageData['is_pinned'] == 1,
+      'replied_to': messageData['replied_to'],
+      'type': messageData['type'],
+      'reactions': messageData['reactions'] ?? {},
+      'delivered_at': messageData['delivered_at'],
+      'read_at': messageData['read_at'],
+      'scheduled_at': messageData['scheduled_at'],
+      'delete_after': messageData['delete_after'],
+    }, firestore.SetOptions(merge: true));
+
+    await _insertOrUpdateMessage(messageData);
+    return messageId;
+  } catch (e) {
+    debugPrint('Failed to create message: $e');
+    throw Exception('Failed to create message: $e');
+  }
+}
+
+Future<void> syncMessagesForConversation(String conversationId) async {
+  try {
+    final snapshot = await _firestore
+        .collection('conversations')
+        .doc(conversationId)
+        .collection('messages')
+        .orderBy('timestamp')
+        .get();
+    for (var doc in snapshot.docs) {
+      final messageData = doc.data();
+      messageData['id'] = doc.id;
+      await _insertOrUpdateMessage(messageData);
+    }
+  } catch (e) {
+    debugPrint('Failed to sync messages for conversation $conversationId: $e');
+    throw Exception('Failed to sync messages: $e');
+  }
+}
 
   Future<List<Map<String, dynamic>>> getMessagesBetween(
       String userId1, String userId2) async {
@@ -923,7 +968,39 @@ class AuthDatabase {
       debugPrint('Failed to fetch messages: $e');
       throw Exception('Failed to fetch messages: $e');
     }
+  } 
+
+  Future<List<Map<String, dynamic>>> getMessagesByConversationId(
+    String conversationId) async {
+  try {
+    if (kIsWeb) {
+      final finder = sembast.Finder(
+        filter: sembast.Filter.equals('conversation_id', conversationId),
+        sortOrders: [sembast.SortOrder('created_at')],
+      );
+      final records = await _messageStore.find(await database, finder: finder);
+      return records.map((r) {
+        final messageData = Map<String, dynamic>.from(r.value);
+        messageData['id'] = r.key.toString();
+        return _normalizeMessageData(messageData);
+      }).toList();
+    } else {
+      final db = await database as sqflite.Database;
+      final result = await db.query(
+        'messages',
+        where: 'conversation_id = ?',
+        whereArgs: [conversationId],
+        orderBy: 'created_at ASC',
+      );
+      return result
+          .map((r) => _normalizeMessageData(Map<String, dynamic>.from(r)))
+          .toList();
+    }
+  } catch (e) {
+    debugPrint('Failed to fetch messages for conversation $conversationId: $e');
+    throw Exception('Failed to fetch messages: $e');
   }
+}
 
   Future<List<Map<String, dynamic>>> getConversationsForUser(
       String userId) async {
