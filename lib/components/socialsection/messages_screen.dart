@@ -9,8 +9,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:ui' as ui;
 import 'dart:async';
 import 'package:encrypt/encrypt.dart' as encrypt;
-import 'package:crypto/crypto.dart'; // Added for sha256
-import 'dart:convert'; // For utf8 encoding
+import 'package:crypto/crypto.dart';
+import 'dart:convert';
 import 'dart:typed_data';
 
 class MessagesScreen extends StatefulWidget {
@@ -47,6 +47,11 @@ class _MessagesScreenState extends State<MessagesScreen> {
   void dispose() {
     _convoSubscription?.cancel();
     super.dispose();
+  }
+
+  // Helper method to safely check if a user is in a list
+  bool _isUserInList(dynamic list, String userId) {
+    return list is List && list.contains(userId);
   }
 
   // Helper method to generate an encrypter for a specific conversation ID
@@ -87,6 +92,9 @@ class _MessagesScreenState extends State<MessagesScreen> {
             participantIds.map((id) => userMap[id]!).toList();
         final unreadCount = await AuthDatabase.instance
             .getUnreadCount(convo['id'], widget.currentUser['id']);
+        if (unreadCount > 0) {
+          await AuthDatabase.instance.syncMessagesForConversation(convo['id']);
+        }
         final lastMessageData = await _getLastMessage(convo['id']);
         return {
           ...convo,
@@ -106,25 +114,20 @@ class _MessagesScreenState extends State<MessagesScreen> {
           _userMap = userMap;
           _errorMessage = null;
 
-          // Separate pinned and non-pinned conversations
           final pinnedConvos = _conversations
-              .where((convo) =>
-                  convo['pinned_users']?.contains(widget.currentUser['id']) ??
-                  false)
+              .where((convo) => _isUserInList(
+                  convo['pinned_users'], widget.currentUser['id']))
               .toList();
           final nonPinnedConvos = _conversations
-              .where((convo) =>
-                  !(convo['pinned_users']?.contains(widget.currentUser['id']) ??
-                      false))
+              .where((convo) => !_isUserInList(
+                  convo['pinned_users'], widget.currentUser['id']))
               .toList();
 
-          // Sort both lists by last_message_timestamp descending
           pinnedConvos.sort((a, b) => b['last_message_timestamp']
               .compareTo(a['last_message_timestamp']));
           nonPinnedConvos.sort((a, b) => b['last_message_timestamp']
               .compareTo(a['last_message_timestamp']));
 
-          // Combine pinned first, then non-pinned
           _conversations = [...pinnedConvos, ...nonPinnedConvos];
         });
       }
@@ -288,11 +291,11 @@ class _MessagesScreenState extends State<MessagesScreen> {
   void _showConversationOptions(
       BuildContext context, Map<String, dynamic> convo) {
     final isPinned =
-        convo['pinned_users']?.contains(widget.currentUser['id']) ?? false;
+        _isUserInList(convo['pinned_users'], widget.currentUser['id']);
     final isMuted =
-        convo['muted_users']?.contains(widget.currentUser['id']) ?? false;
+        _isUserInList(convo['muted_users'], widget.currentUser['id']);
     final isBlocked =
-        convo['blocked_users']?.contains(widget.currentUser['id']) ?? false;
+        _isUserInList(convo['blocked_users'], widget.currentUser['id']);
 
     showModalBottomSheet(
       context: context,
@@ -613,18 +616,15 @@ class _MessagesScreenState extends State<MessagesScreen> {
                                       const SizedBox(height: 12),
                                   itemBuilder: (context, index) {
                                     final convo = _conversations[index];
-                                    final isMuted = convo['muted_users']
-                                            ?.contains(
-                                                widget.currentUser['id']) ??
-                                        false;
-                                    final isPinned = convo['pinned_users']
-                                            ?.contains(
-                                                widget.currentUser['id']) ??
-                                        false;
-                                    final isBlocked = convo['blocked_users']
-                                            ?.contains(
-                                                widget.currentUser['id']) ??
-                                        false;
+                                    final isMuted = _isUserInList(
+                                        convo['muted_users'],
+                                        widget.currentUser['id']);
+                                    final isPinned = _isUserInList(
+                                        convo['pinned_users'],
+                                        widget.currentUser['id']);
+                                    final isBlocked = _isUserInList(
+                                        convo['blocked_users'],
+                                        widget.currentUser['id']);
                                     final unreadCount =
                                         convo['unread_count'] ?? 0;
                                     final timestampString =
