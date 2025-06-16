@@ -223,16 +223,16 @@ class SplashScreenState extends State<SplashScreen>
                     'Welcome to MovieFlix',
                     style: TextStyle(
                       color: Colors.white,
-                      fontSize: 28,
+                      fontSize: 32,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
-                  SizedBox(height: 8),
+                  SizedBox(height: 10),
                   Text(
                     'Yours by Mzazimhenga',
                     style: TextStyle(
-                      color: Colors.white70,
-                      fontSize: 16,
+                      color:  Color(0xffff1b1b),
+                      fontSize: 20,
                     ),
                   ),
                 ],
