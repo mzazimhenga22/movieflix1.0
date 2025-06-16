@@ -1345,6 +1345,7 @@ class _GroupChatScreenState extends State<GroupChatScreen>
           encrypter: _encrypter,
           isRead:
               message['read_by'].contains(widget.currentUser['id'].toString()),
+          isStoryReply: false,
         ));
       }
     }
