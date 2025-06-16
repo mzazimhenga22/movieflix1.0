@@ -175,4 +175,3 @@ void showTriviaDialog(BuildContext context, WatchPartyScreenState state) {
     ),
   );
 }
-
