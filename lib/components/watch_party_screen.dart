@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
 import 'package:movie_app/settings_provider.dart';
 import 'watch_party_components.dart';
@@ -17,11 +18,12 @@ class WatchPartyScreenState extends State<WatchPartyScreen>
     with TickerProviderStateMixin {
   final TextEditingController _chatController = TextEditingController();
   final TextEditingController _searchController = TextEditingController();
-  final List<String> _messages = [];
+  List<String> _messages = []; // Changed from final to non-final
   String _videoPath = "";
   String _title = "Watch Party Video";
   String? _subtitleUrl;
   bool _isHls = false;
+  bool _isPlaying = false; // Track playback state
 
   bool _controlsVisible = true;
   bool _isLoading = false;
@@ -32,7 +34,7 @@ class WatchPartyScreenState extends State<WatchPartyScreen>
 
   String? _partyCode;
   bool _isAuthorized = false;
-  bool _isCreator = false;
+  bool _isCreator = false; // Track if user is party creator
   int _inviteJoinCount = 0;
   DateTime? _partyStartTime;
   int _remainingMinutes = 0;
@@ -50,6 +52,9 @@ class WatchPartyScreenState extends State<WatchPartyScreen>
   // Social and Engagement
   final Map<String, String> _userSeats = {};
   final List<Map<String, dynamic>> _emojiReactions = [];
+
+  // Firestore instance
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
   // Getters
   bool get isSearching => _isSearching;
@@ -78,6 +83,8 @@ class WatchPartyScreenState extends State<WatchPartyScreen>
   TextEditingController get chatController => _chatController;
   Map<String, String> get userSeats => _userSeats;
   List<Map<String, dynamic>> get emojiReactions => _emojiReactions;
+  bool get isPlaying => _isPlaying;
+  bool get isCreator => _isCreator;
 
   @override
   void initState() {
@@ -89,6 +96,83 @@ class WatchPartyScreenState extends State<WatchPartyScreen>
     WidgetsBinding.instance
         .addPostFrameCallback((_) => showRoleSelection(context, this));
     startControlsTimer(this);
+    _listenToPlaybackState();
+    _listenToParticipants();
+  }
+
+  // Save party to Firestore
+  Future<void> savePartyToFirestore(
+      String code, Map<String, dynamic> movie, int delayMinutes) async {
+    final partyData = {
+      'code': code,
+      'movieTitle': movie['title'] ?? "Untitled",
+      'startTime':
+          DateTime.now().add(Duration(minutes: delayMinutes)).toIso8601String(),
+      'participants': 1,
+      'maxParticipants': 5,
+      'createdAt': FieldValue.serverTimestamp(),
+      'isActive': true,
+      'expiryTime': DateTime.now().add(Duration(hours: 24)).toIso8601String(),
+    };
+    await _firestore.collection('watch_parties').doc(code).set(partyData);
+  }
+
+  // Listen to participant updates and messages
+  void _listenToParticipants() {
+    if (_partyCode != null) {
+      _firestore.collection('watch_parties').doc(_partyCode).snapshots().listen(
+        (snapshot) {
+          if (snapshot.exists && mounted) {
+            setState(() {
+              _inviteJoinCount = snapshot.data()?['participants'] ?? 0;
+            });
+          }
+        },
+        onError: (error) =>
+            showError(context, "Error syncing participants: $error"),
+      );
+      _firestore
+          .collection('watch_parties')
+          .doc(_partyCode)
+          .collection('messages')
+          .orderBy('timestamp', descending: true)
+          .snapshots()
+          .listen(
+        (snapshot) {
+          if (mounted) {
+            setState(() {
+              _messages =
+                  snapshot.docs.map((doc) => doc['message'] as String).toList();
+            });
+          }
+        },
+        onError: (error) =>
+            showError(context, "Error syncing messages: $error"),
+      );
+    }
+  }
+
+  // Listen to playback state
+  void _listenToPlaybackState() {
+    if (_partyCode != null) {
+      _firestore.collection('watch_parties').doc(_partyCode).snapshots().listen(
+        (snapshot) {
+          if (snapshot.exists && mounted) {
+            final playbackState = snapshot.data()?['playbackState'];
+            setState(() {
+              _isPlaying = playbackState == 'playing';
+              if (_isPlaying) {
+                _curtainController.forward();
+              } else {
+                _curtainController.reverse();
+              }
+            });
+          }
+        },
+        onError: (error) =>
+            showError(context, "Error syncing playback: $error"),
+      );
+    }
   }
 
   void startMoviePlayback(Map<String, dynamic> movie) {
@@ -107,6 +191,13 @@ class WatchPartyScreenState extends State<WatchPartyScreen>
     fetchStreamingLinks(movie, this).then((_) {
       if (mounted) {
         _curtainController.forward();
+        _isPlaying = true;
+        if (_partyCode != null) {
+          _firestore.collection('watch_parties').doc(_partyCode).update({
+            'playbackState': 'playing',
+            'timestamp': DateTime.now().millisecondsSinceEpoch / 1000,
+          });
+        }
         startPartyTimer(() {
           if (mounted && _remainingMinutes <= 0) {
             endParty();
@@ -136,23 +227,56 @@ class WatchPartyScreenState extends State<WatchPartyScreen>
   void sendMessage(String value) {
     if (value.isNotEmpty) {
       final userId = "User$_inviteJoinCount";
+      final message = "$userId: $value";
       setState(() {
-        _messages.add("$userId: $value");
+        _messages.add(message);
       });
       _chatController.clear();
+      if (_partyCode != null) {
+        _firestore
+            .collection('watch_parties')
+            .doc(_partyCode)
+            .collection('messages')
+            .add({
+          'message': message,
+          'timestamp': FieldValue.serverTimestamp(),
+        });
+      }
     }
   }
 
   void playVideo() {
+    if (!_isCreator) {
+      showError(context, "Only the host can control playback");
+      return;
+    }
     setState(() {
+      _isPlaying = true;
       _curtainController.forward();
     });
+    if (_partyCode != null) {
+      _firestore.collection('watch_parties').doc(_partyCode).update({
+        'playbackState': 'playing',
+        'timestamp': DateTime.now().millisecondsSinceEpoch / 1000,
+      });
+    }
   }
 
   void pauseVideo() {
+    if (!_isCreator) {
+      showError(context, "Only the host can control playback");
+      return;
+    }
     setState(() {
+      _isPlaying = false;
       _curtainController.reverse();
     });
+    if (_partyCode != null) {
+      _firestore.collection('watch_parties').doc(_partyCode).update({
+        'playbackState': 'paused',
+        'timestamp': DateTime.now().millisecondsSinceEpoch / 1000,
+      });
+    }
   }
 
   void toggleChatMute() {
@@ -173,8 +297,15 @@ class WatchPartyScreenState extends State<WatchPartyScreen>
       _videoPath = "";
       _subtitleUrl = null;
       _isHls = false;
+      _isPlaying = false;
     });
     _partyTimer?.cancel();
+    if (_partyCode != null) {
+      _firestore.collection('watch_parties').doc(_partyCode).update({
+        'playbackState': 'paused',
+        'timestamp': DateTime.now().millisecondsSinceEpoch / 1000,
+      });
+    }
   }
 
   void upgradeToPremium() {
@@ -231,15 +362,44 @@ class WatchPartyScreenState extends State<WatchPartyScreen>
   }
 
   void addTriviaMessage(String answer) {
-    setState(() => _messages.add("Trivia: $answer"));
+    final message = "Trivia: $answer";
+    setState(() => _messages.add(message));
+    if (_partyCode != null) {
+      _firestore
+          .collection('watch_parties')
+          .doc(_partyCode)
+          .collection('messages')
+          .add({
+        'message': message,
+        'timestamp': FieldValue.serverTimestamp(),
+      });
+    }
   }
 
-  void authorizeCreator() {
+  void authorizeCreator() async {
     setState(() {
-      _isAuthorized = true;
-      _isCreator = true;
-      _partyCode = generateSecurePartyCode();
+      _isLoading = true;
     });
+    final code = generateSecurePartyCode();
+    try {
+      final existingParty =
+          await _firestore.collection('watch_parties').doc(code).get();
+      if (existingParty.exists) {
+        showError(context, "Party code already exists, try again.");
+        return;
+      }
+      setState(() {
+        _isAuthorized = true;
+        _isCreator = true;
+        _partyCode = code;
+      });
+      _listenToParticipants();
+      showSuccess(context, "Party created! Code: $code");
+    } catch (e) {
+      showError(context, "Failed to create party: $e");
+    } finally {
+      setState(() => _isLoading = false);
+    }
   }
 
   void authorizeAdmin() {
@@ -260,13 +420,37 @@ class WatchPartyScreenState extends State<WatchPartyScreen>
     });
   }
 
-  void joinParty(String partyCode, String seat) {
-    setState(() {
-      _isAuthorized = true;
-      _partyCode = partyCode;
-      _userSeats["User$_inviteJoinCount"] = seat;
-      _inviteJoinCount++;
-    });
+  void joinParty(String partyCode, String seat) async {
+    setState(() => _isLoading = true);
+    try {
+      final partyDoc =
+          await _firestore.collection('watch_parties').doc(partyCode).get();
+      if (partyDoc.exists && partyDoc.data()?['isActive'] == true) {
+        final currentParticipants = partyDoc.data()?['participants'] ?? 0;
+        final maxParticipants = partyDoc.data()?['maxParticipants'] ?? 5;
+        if (currentParticipants < maxParticipants) {
+          await _firestore.collection('watch_parties').doc(partyCode).update({
+            'participants': FieldValue.increment(1),
+          });
+          setState(() {
+            _isAuthorized = true;
+            _partyCode = partyCode;
+            _userSeats["User$_inviteJoinCount"] = seat;
+            _inviteJoinCount = currentParticipants + 1;
+          });
+          _listenToParticipants();
+          showSuccess(context, "Joined party successfully!");
+        } else {
+          showError(context, "Party is full!");
+        }
+      } else {
+        showError(context, "Invalid or expired party code!");
+      }
+    } catch (e) {
+      showError(context, "Failed to join party: $e");
+    } finally {
+      setState(() => _isLoading = false);
+    }
   }
 
   void startPartyScheduling(int delayMinutes) {
@@ -290,13 +474,20 @@ class WatchPartyScreenState extends State<WatchPartyScreen>
     });
   }
 
-  void endParty() {
+  void endParty() async {
+    if (_partyCode != null) {
+      await _firestore.collection('watch_parties').doc(_partyCode).update({
+        'isActive': false,
+        'playbackState': 'paused',
+      });
+    }
     setState(() {
       _partyStartTime = null;
       _videoPath = "";
       _title = "Watch Party Video";
       _subtitleUrl = null;
       _isHls = false;
+      _isPlaying = false;
       _isDirectStreamMode = false;
     });
   }
