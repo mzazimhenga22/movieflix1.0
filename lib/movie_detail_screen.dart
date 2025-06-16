@@ -137,6 +137,51 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
     );
   }
 
+  Future<bool> _requestStoragePermission() async {
+    final status = await Permission.storage.status;
+    if (status.isGranted) {
+      return true;
+    } else if (status.isDenied || status.isRestricted) {
+      final result = await Permission.storage.request();
+      return result.isGranted;
+    } else if (status.isPermanentlyDenied) {
+      await showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          backgroundColor: Colors.black87,
+          title: const Text("Permission Required",
+              style: TextStyle(color: Colors.white)),
+          content: const Text(
+              "Please enable storage permission from app settings to download movies.",
+              style: TextStyle(color: Colors.white70)),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text("Cancel",
+                  style: TextStyle(
+                      color:
+                          Provider.of<SettingsProvider>(context, listen: false)
+                              .accentColor)),
+            ),
+            TextButton(
+              onPressed: () async {
+                Navigator.pop(context);
+                await openAppSettings();
+              },
+              child: Text("Open Settings",
+                  style: TextStyle(
+                      color:
+                          Provider.of<SettingsProvider>(context, listen: false)
+                              .accentColor)),
+            ),
+          ],
+        ),
+      );
+      return false;
+    }
+    return false;
+  }
+
   Future<void> _downloadMovie(
     Map<String, dynamic> details, {
     required String resolution,
@@ -175,7 +220,7 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
       return;
     }
 
-    if (await Permission.storage.request().isGranted) {
+    if (await _requestStoragePermission()) {
       final directory = Platform.isAndroid
           ? (await getExternalStorageDirectory())!
           : await getApplicationDocumentsDirectory();
@@ -195,7 +240,8 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
     } else {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Storage permission denied.")),
+        const SnackBar(
+            content: Text("Storage permission is required to download.")),
       );
     }
   }
@@ -1712,4 +1758,3 @@ class EpisodeLoadingDialogState extends State<EpisodeLoadingDialog> {
     );
   }
 }
-
