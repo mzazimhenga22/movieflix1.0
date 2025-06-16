@@ -255,7 +255,7 @@ Widget buildPartyView(BuildContext context, WatchPartyScreenState state) {
               MainVideoPlayer(
                 videoPath: state.videoPath,
                 title: state.title,
-                releaseYear: releaseYear, // Use fallback releaseYear
+                releaseYear: releaseYear,
                 isHls: state.isHls,
                 subtitleUrl: state.subtitleUrl,
               ),
@@ -268,14 +268,17 @@ Widget buildPartyView(BuildContext context, WatchPartyScreenState state) {
                   color: Colors.black54,
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
-                    children: List.generate(
-                      10,
-                      (index) => Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 4),
-                        child:
-                            Icon(Icons.person, color: Colors.white54, size: 20),
-                      ),
-                    ),
+                    children: state.userSeats.entries
+                        .map((entry) => Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 4),
+                              child: Text(
+                                entry.value,
+                                style: const TextStyle(
+                                    color: Colors.white54, fontSize: 20),
+                              ),
+                            ))
+                        .toList(),
                   ),
                 ),
               ),
@@ -650,8 +653,10 @@ Widget buildPremiumUpsell(BuildContext context, WatchPartyScreenState state) {
           ),
           const SizedBox(height: 16),
           TextButton(
-            onPressed: () =>
-                showSuccess(context, "Watch a sponsored ad for a free trial!"),
+            onPressed: () {
+              state.addTrialTicket();
+              showSuccess(context, "Free trial ticket earned!");
+            },
             child: const Text(
               "Watch Ad for Free Trial",
               style: TextStyle(color: Colors.white),
@@ -690,3 +695,4 @@ class PopcornProgressBar extends StatelessWidget {
     );
   }
 }
+
