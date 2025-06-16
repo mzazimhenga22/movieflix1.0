@@ -16,6 +16,8 @@ import 'settings_screen.dart';
 import 'watch_history_screen.dart';
 import '../marketplace/marketplace_home.dart';
 import 'dart:math';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'session_manager.dart';
 
 class AnimatedBackground extends StatelessWidget {
   const AnimatedBackground({super.key});
@@ -574,11 +576,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                                   _buildOptionTile(
                                                     icon: Icons.logout,
                                                     title: 'Logout',
-                                                    onTap: () {
-                                                      UserManager.instance
-                                                          .updateProfile(null);
+                                                    onTap: () async {
+                                                      // Sign out from Firebase Authentication
+                                                      await FirebaseAuth
+                                                          .instance
+                                                          .signOut();
+                                                      // Clear session data from SharedPreferences
+                                                      await SessionManager
+                                                          .clearAuthToken();
+                                                      // Clear in-memory user data
                                                       UserManager.instance
                                                           .clearUser();
+                                                      // Navigate to SignInScreen
                                                       Navigator.pushReplacement(
                                                         context,
                                                         MaterialPageRoute(
