@@ -59,7 +59,7 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
       debugPrint('Failed to fetch TV show details: $e');
       if (mounted) {
         setState(() {
-          _releaseYear = 1970; // Fallback
+          _releaseYear = 1970; // Fallback year
         });
       }
     }
@@ -94,7 +94,7 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
         _seasonTmdbIdCache[seasonNumber] = null;
         _isLoading = false;
         _fetchError = true;
-        _errorMessage = 'Unable to load episodes. Please try again later.';
+        _errorMessage = 'Unable to load episodes.';
       });
     }
   }
@@ -165,7 +165,6 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
             Map<String, dynamic> streamingInfo = {};
             const maxRetries = 2;
             bool success = false;
-            String lastError = '';
 
             for (int attempt = 1;
                 attempt <= maxRetries && !success;
@@ -185,10 +184,8 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
                   episodeTmdbId: episodeId,
                 );
                 success = true;
-              } catch (e, stacktrace) {
+              } catch (e) {
                 debugPrint("Streaming fetch error (Attempt $attempt): $e");
-                debugPrintStack(stackTrace: stacktrace);
-                lastError = e.toString();
                 if (attempt < maxRetries) {
                   await Future.delayed(const Duration(seconds: 1));
                 }
@@ -236,7 +233,7 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
                   builder: (context) => AlertDialog(
                     title: const Text("Unavailable"),
                     content: const Text(
-                        "This episode is not available at the moment. Please try again later."),
+                        "This episode is not available at the moment."),
                     actions: [
                       TextButton(
                         onPressed: () => Navigator.pop(context),
@@ -295,9 +292,10 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
                     const Text(
                       'Episodes',
                       style: TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white),
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
                     ),
                     const Spacer(),
                     DropdownButton<int>(
@@ -307,11 +305,12 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
                       iconEnabledColor: settings.accentColor,
                       items: widget.seasons
                           .map<DropdownMenuItem<int>>(
-                              (season) => DropdownMenuItem(
-                                    value: season['season_number'] as int? ?? 0,
-                                    child: Text(
-                                        'Season ${season['season_number'] ?? 0}'),
-                                  ))
+                            (season) => DropdownMenuItem(
+                              value: season['season_number'] as int? ?? 0,
+                              child: Text(
+                                  'Season ${season['season_number'] ?? 0}'),
+                            ),
+                          )
                           .toList(),
                       onChanged: (value) {
                         if (value != null && mounted) {
@@ -329,13 +328,31 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
               _isLoading
                   ? Center(
                       child: CircularProgressIndicator(
-                          color: settings.accentColor))
+                        color: settings.accentColor,
+                      ),
+                    )
                   : _fetchError
                       ? Padding(
                           padding: const EdgeInsets.all(16),
-                          child: Text(
-                            _errorMessage,
-                            style: const TextStyle(color: Colors.red),
+                          child: Column(
+                            children: [
+                              Text(
+                                _errorMessage,
+                                style: const TextStyle(color: Colors.red),
+                              ),
+                              const SizedBox(height: 8),
+                              ElevatedButton(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: settings.accentColor,
+                                ),
+                                onPressed: () =>
+                                    _fetchEpisodes(_selectedSeasonNumber),
+                                child: const Text(
+                                  "Retry",
+                                  style: TextStyle(color: Colors.black),
+                                ),
+                              ),
+                            ],
                           ),
                         )
                       : _buildEpisodesList(),
@@ -361,7 +378,7 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
     return ListView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      itemExtent: 100.0, // Added for smoother scrolling performance
+      itemExtent: 100.0,
       itemCount: episodes.length,
       itemBuilder: (context, index) {
         final episode = episodes[index];
@@ -427,21 +444,27 @@ class _EpisodeCard extends StatelessWidget {
                             height: 70,
                             color: Colors.grey,
                             child: CircularProgressIndicator(
-                                color: settings.accentColor),
+                              color: settings.accentColor,
+                            ),
                           ),
                           errorWidget: (context, url, error) => Container(
                             width: 120,
                             height: 70,
                             color: Colors.grey,
-                            child: const Icon(Icons.image_not_supported,
-                                color: Colors.white70),
+                            child: const Icon(
+                              Icons.image_not_supported,
+                              color: Colors.white70,
+                            ),
                           ),
                         )
                       : Container(
                           width: 120,
                           height: 70,
                           color: Colors.grey,
-                          child: Icon(Icons.tv, color: settings.accentColor),
+                          child: Icon(
+                            Icons.tv,
+                            color: settings.accentColor,
+                          ),
                         ),
                 ),
                 const SizedBox(width: 12),
@@ -452,9 +475,10 @@ class _EpisodeCard extends StatelessWidget {
                       Text(
                         'Episode $episodeNumber: $episodeName',
                         style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white),
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -464,7 +488,9 @@ class _EpisodeCard extends StatelessWidget {
                             ? 'No description available.'
                             : episodeOverview,
                         style: const TextStyle(
-                            fontSize: 14, color: Colors.white70),
+                          fontSize: 14,
+                          color: Colors.white70,
+                        ),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -474,7 +500,9 @@ class _EpisodeCard extends StatelessWidget {
                           child: Text(
                             '${runtime}m',
                             style: const TextStyle(
-                                fontSize: 14, color: Colors.white60),
+                              fontSize: 14,
+                              color: Colors.white60,
+                            ),
                           ),
                         ),
                     ],
@@ -521,36 +549,49 @@ class _EpisodePlayOptionsModalState extends State<_EpisodePlayOptionsModal> {
             child: Text(
               "Play Options",
               style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white),
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
             ),
           ),
           const SizedBox(height: 16),
-          const Text("Select Resolution:",
-              style: TextStyle(fontSize: 16, color: Colors.white)),
+          const Text(
+            "Select Resolution:",
+            style: TextStyle(fontSize: 16, color: Colors.white),
+          ),
           DropdownButton<String>(
             value: _resolution,
             dropdownColor: Colors.black87,
+            style: const TextStyle(color: Colors.white),
             iconEnabledColor: settings.accentColor,
             items: const [
               DropdownMenuItem(
-                  value: "480p",
-                  child: Text("480p", style: TextStyle(color: Colors.white))),
+                value: "480p",
+                child: Text("480p", style: TextStyle(color: Colors.white)),
+              ),
               DropdownMenuItem(
-                  value: "720p",
-                  child: Text("720p", style: TextStyle(color: Colors.white))),
+                value: "720p",
+                child: Text("720p", style: TextStyle(color: Colors.white)),
+              ),
               DropdownMenuItem(
-                  value: "1080p",
-                  child: Text("1080p", style: TextStyle(color: Colors.white))),
+                value: "1080p",
+                child: Text("1080p", style: TextStyle(color: Colors.white)),
+              ),
             ],
-            onChanged: (value) => setState(() => _resolution = value!),
+            onChanged: (value) {
+              if (value != null) {
+                setState(() => _resolution = value);
+              }
+            },
           ),
           const SizedBox(height: 16),
           Row(
             children: [
-              const Text("Enable Subtitles:",
-                  style: TextStyle(fontSize: 16, color: Colors.white)),
+              const Text(
+                "Enable Subtitles:",
+                style: TextStyle(fontSize: 16, color: Colors.white),
+              ),
               Switch(
                 value: _subtitles,
                 activeColor: settings.accentColor,
@@ -562,12 +603,15 @@ class _EpisodePlayOptionsModalState extends State<_EpisodePlayOptionsModal> {
           Center(
             child: ElevatedButton(
               style: ElevatedButton.styleFrom(
-                  backgroundColor: settings.accentColor),
+                backgroundColor: settings.accentColor,
+              ),
               onPressed: () {
                 widget.onConfirm(_resolution, _subtitles);
               },
-              child:
-                  const Text("Play Now", style: TextStyle(color: Colors.black)),
+              child: const Text(
+                "Play Now",
+                style: TextStyle(color: Colors.black),
+              ),
             ),
           ),
           const SizedBox(height: 16),
@@ -629,12 +673,13 @@ class LoadingDialogState extends State<LoadingDialog> {
               const SizedBox(height: 12),
               ElevatedButton(
                 style: ElevatedButton.styleFrom(
-                    backgroundColor: settings.accentColor),
-                onPressed: () {
-                  Navigator.pop(context);
-                },
-                child:
-                    const Text("Cancel", style: TextStyle(color: Colors.black)),
+                  backgroundColor: settings.accentColor,
+                ),
+                onPressed: () => Navigator.pop(context),
+                child: const Text(
+                  "Cancel",
+                  style: TextStyle(color: Colors.black),
+                ),
               ),
             ],
           ],
@@ -643,4 +688,3 @@ class LoadingDialogState extends State<LoadingDialog> {
     );
   }
 }
-
