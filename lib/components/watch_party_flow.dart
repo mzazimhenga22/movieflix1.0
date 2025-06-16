@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
 import 'package:movie_app/settings_provider.dart';
 import 'watch_party_screen.dart';
@@ -175,7 +176,19 @@ void showCodeEntryDialog(BuildContext context, WatchPartyScreenState state) {
 }
 
 Future<bool> validatePartyCode(String code, WatchPartyScreenState state) async {
-  return code.length == 6 && code == state.partyCode;
+  if (code.length != 6) return false;
+  try {
+    final partyDoc = await FirebaseFirestore.instance
+        .collection('watch_parties')
+        .doc(code)
+        .get();
+    if (!partyDoc.exists || partyDoc.data()?['isActive'] != true) return false;
+    final expiryTime = DateTime.parse(partyDoc.data()?['expiryTime']);
+    return DateTime.now().isBefore(expiryTime);
+  } catch (e) {
+    showError(state.context, "Error validating code: $e");
+    return false;
+  }
 }
 
 void scheduleParty(int delayMinutes, Map<String, dynamic> movie,
@@ -186,6 +199,7 @@ void scheduleParty(int delayMinutes, Map<String, dynamic> movie,
   }
   try {
     state.startPartyScheduling(delayMinutes);
+    await state.savePartyToFirestore(state.partyCode!, movie, delayMinutes);
     await fetchStreamingLinks(movie, state);
     if (!state.mounted) return;
     state.curtainController.forward();
