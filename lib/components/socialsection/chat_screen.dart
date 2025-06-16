@@ -103,21 +103,17 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
     _initializeLocalDatabase();
     _initializeNotifications();
 
-    // Declare FirestoreMessages to store a copy of messages
     List<Map<String, dynamic>>? FirestoreMessages;
 
     _loadMessages().then((_) {
-      // Assign _messages to FirestoreMessages after loading
       FirestoreMessages = List<Map<String, dynamic>>.from(_messages);
       _markAllMessagesAsRead();
       WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
-      // Use FirestoreMessages (e.g., log or process it)
       if (FirestoreMessages != null && FirestoreMessages!.isNotEmpty) {
         print("Loaded ${FirestoreMessages!.length} messages");
       }
     });
 
-    // Listen to Firestore updates
     _listenToFirestoreMessages();
 
     _loadDraft();
@@ -212,6 +208,7 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
   void _handleStoryInteraction(String type, Map<String, dynamic> data) {
     if (type == 'reply') {
       final replyText = data['content'];
+      final storyId = data['storyId'];
       final iv = encrypt.IV.fromSecureRandom(16);
       final encryptedText = _encrypter.encrypt(replyText, iv: iv).base64;
       final newMessage = {
@@ -226,6 +223,8 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
         'replied_to': null,
         'type': 'text',
         'reactions': {},
+        'is_story_reply': true,
+        'story_id': storyId,
       };
       _sendMessageToBoth(newMessage);
     } else {
@@ -265,14 +264,18 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
               return {
                 ...message,
                 'message': decryptedText,
-                'reactions': reactions
+                'reactions': reactions,
+                'is_story_reply': message['is_story_reply'] ?? false,
+                'story_id': message['story_id'],
               };
             } catch (e) {
               debugPrint('Decryption failed for message ${message['id']}: $e');
               return {
                 ...message,
                 'message': '[Decryption Failed: $e]',
-                'reactions': reactions
+                'reactions': reactions,
+                'is_story_reply': message['is_story_reply'] ?? false,
+                'story_id': message['story_id'],
               };
             }
           } else {
@@ -281,11 +284,18 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
             return {
               ...message,
               'message': '[Invalid IV]',
-              'reactions': reactions
+              'reactions': reactions,
+              'is_story_reply': message['is_story_reply'] ?? false,
+              'story_id': message['story_id'],
             };
           }
         }
-        return {...message, 'reactions': reactions};
+        return {
+          ...message,
+          'reactions': reactions,
+          'is_story_reply': message['is_story_reply'] ?? false,
+          'story_id': message['story_id'],
+        };
       }).toList();
       if (mounted) setState(() => _messages = decryptedMessages);
       _syncOfflineMessages();
@@ -344,6 +354,8 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
       'delivered_at': null,
       'read_at': null,
       'isPending': true,
+      'is_story_reply': false,
+      'story_id': null,
     };
 
     final decryptedMessage = {
@@ -395,6 +407,8 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
         'replied_to': _replyingToMessageId,
         'type': 'audio',
         'reactions': {},
+        'is_story_reply': false,
+        'story_id': null,
       };
       _sendMessageToBoth(message);
       _scrollToBottom();
@@ -430,6 +444,8 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
         'replied_to': _replyingToMessageId,
         'type': fileType,
         'reactions': {},
+        'is_story_reply': false,
+        'story_id': null,
       };
       _sendMessageToBoth(message);
       _scrollToBottom();
@@ -695,6 +711,8 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
         'read_at': null,
         'scheduled_at': message['scheduled_at'],
         'delete_after': message['delete_after'],
+        'is_story_reply': message['is_story_reply'] ?? false,
+        'story_id': message['story_id'] ?? null,
       });
       await AuthDatabase.instance.updateMessage({
         'id': message['id'],
@@ -720,6 +738,8 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
             ..._messages[index],
             'firestore_id': message['id'],
             'isPending': false,
+            'is_story_reply': message['is_story_reply'] ?? false,
+            'story_id': message['story_id'],
           };
         }
       });
@@ -891,6 +911,8 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
       'type': 'text',
       'reactions': {},
       'scheduled_at': time.toIso8601String(),
+      'is_story_reply': false,
+      'story_id': null,
     };
     _sendMessageToBoth(message);
   }
@@ -927,6 +949,7 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
   void _openStoryScreen() {
     final otherUserStories = [
       {
+        'id': const Uuid().v4(),
         'user': widget.otherUser['username']?.toString() ?? 'Unknown',
         'userId': widget.otherUser['id'].toString(),
         'type': 'image',
@@ -1016,11 +1039,13 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
               : (data['reactions'] ?? {}),
           'delivered_at':
               (data['delivered_at'] as Timestamp?)?.toDate().toIso8601String(),
-          'read_at Cortes':
+          'read_at':
               (data['read_at'] as Timestamp?)?.toDate().toIso8601String(),
           'scheduled_at': data['scheduled_at']?.toString(),
           'delete_after': data['delete_after']?.toString(),
           'isPending': false,
+          'is_story_reply': data['is_story_reply'] ?? false,
+          'story_id': data['story_id'],
         };
 
         await AuthDatabase.instance.createMessage(encryptedMessage);
@@ -1209,7 +1234,7 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
     if (isSameDay(date, now)) return "Today";
     if (isSameDay(date, now.subtract(const Duration(days: 1))))
       return "Yesterday";
-    return DateFormat('MMM Justice d, yyyy').format(date);
+    return DateFormat('MMM d, yyyy').format(date);
   }
 
   @override
@@ -1293,6 +1318,7 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
           currentlyPlayingId: _currentlyPlayingId,
           encrypter: _encrypter,
           isRead: item['data']['is_read'] == true,
+          isStoryReply: item['data']['is_story_reply'] == true,
         ));
       } else {
         listWidgets.add(ListTile(
@@ -1687,3 +1713,4 @@ class _WebRTCCallWidgetState extends State<WebRTCCallWidget> {
     );
   }
 }
+
