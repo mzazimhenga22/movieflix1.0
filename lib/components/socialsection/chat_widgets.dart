@@ -19,6 +19,7 @@ class MessageWidget extends StatefulWidget {
   final String? currentlyPlayingId;
   final encrypt.Encrypter encrypter;
   final bool isRead;
+  final bool isStoryReply;
 
   const MessageWidget({
     Key? key,
@@ -35,6 +36,7 @@ class MessageWidget extends StatefulWidget {
     required this.currentlyPlayingId,
     required this.encrypter,
     required this.isRead,
+    required this.isStoryReply,
   }) : super(key: key);
 
   @override
@@ -57,7 +59,6 @@ class _MessageWidgetState extends State<MessageWidget> {
     final formattedTime = DateFormat('h:mm a').format(messageTime);
     final messageType = widget.message['type']?.toString() ?? 'text';
 
-    // Define tick widget for sent messages
     Widget tickWidget = widget.isMe
         ? Padding(
             padding: const EdgeInsets.only(left: 4.0),
@@ -223,6 +224,18 @@ class _MessageWidgetState extends State<MessageWidget> {
         content = Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            if (!widget.isMe && widget.isStoryReply)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Row(
+                  children: [
+                    Icon(Icons.history, size: 16, color: Colors.grey),
+                    SizedBox(width: 4),
+                    Text('Story Reply',
+                        style: TextStyle(color: Colors.grey, fontSize: 12)),
+                  ],
+                ),
+              ),
             if (widget.repliedToText != null) ...[
               GestureDetector(
                 onTap: widget.onTapOriginal,
