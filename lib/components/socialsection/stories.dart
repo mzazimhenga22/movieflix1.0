@@ -135,13 +135,14 @@ class _StoryScreenState extends State<StoryScreen>
     }
   }
 
-  void _updateChatWithInteraction(String type, String content) {
+  void _updateChatWithInteraction(String type, Map<String, dynamic> data) {
     if (widget.onStoryInteraction != null) {
       widget.onStoryInteraction!(type, {
         'storyUser': _activeStories[_currentIndex]['user'],
         'storyUserId': _activeStories[_currentIndex]['userId'],
-        'content': content,
+        'content': data['content'],
         'timestamp': DateTime.now().toIso8601String(),
+        'storyId': _activeStories[_currentIndex]['id'], // Added storyId
       });
     }
   }
@@ -245,6 +246,32 @@ class _StoryScreenState extends State<StoryScreen>
               right: 16,
               child: Column(
                 children: [
+                  // Multiple progress bars for each story
+                  Row(
+                    children: List.generate(_activeStories.length, (index) {
+                      double progress;
+                      if (index < _currentIndex) {
+                        progress = 1.0;
+                      } else if (index == _currentIndex) {
+                        progress = _animationController.value;
+                      } else {
+                        progress = 0.0;
+                      }
+                      return Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 2),
+                          child: LinearProgressIndicator(
+                            value: progress,
+                            backgroundColor: Colors.white24,
+                            valueColor: const AlwaysStoppedAnimation<Color>(
+                                Colors.white),
+                            minHeight: 3,
+                          ),
+                        ),
+                      );
+                    }),
+                  ),
+                  const SizedBox(height: 8),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -285,17 +312,6 @@ class _StoryScreenState extends State<StoryScreen>
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(2),
-                    child: LinearProgressIndicator(
-                      value: _animationController.value,
-                      backgroundColor: Colors.white24,
-                      valueColor:
-                          const AlwaysStoppedAnimation<Color>(Colors.white),
-                      minHeight: 3,
-                    ),
-                  ),
                 ],
               ),
             ),
@@ -332,7 +348,8 @@ class _StoryScreenState extends State<StoryScreen>
                                     content: Text(
                                         "Liked story by ${story['user']}")),
                               );
-                              _updateChatWithInteraction("like", "");
+                              _updateChatWithInteraction(
+                                  "like", {'content': ''});
                             },
                           ),
                           const SizedBox(width: 16),
@@ -350,7 +367,8 @@ class _StoryScreenState extends State<StoryScreen>
                               ScaffoldMessenger.of(context).showSnackBar(
                                 const SnackBar(content: Text("Shared story")),
                               );
-                              _updateChatWithInteraction("share", "");
+                              _updateChatWithInteraction(
+                                  "share", {'content': ''});
                             },
                           ),
                         ],
@@ -382,8 +400,9 @@ class _StoryScreenState extends State<StoryScreen>
                                     content: Text(
                                         "Replied: ${_replyController.text}")),
                               );
-                              _updateChatWithInteraction(
-                                  "reply", _replyController.text);
+                              _updateChatWithInteraction("reply", {
+                                'content': _replyController.text,
+                              });
                               _replyController.clear();
                               FocusScope.of(context).unfocus();
                             },
@@ -395,7 +414,9 @@ class _StoryScreenState extends State<StoryScreen>
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(content: Text("Replied: $value")),
                           );
-                          _updateChatWithInteraction("reply", value);
+                          _updateChatWithInteraction("reply", {
+                            'content': value,
+                          });
                           _replyController.clear();
                           FocusScope.of(context).unfocus();
                         },
@@ -411,3 +432,4 @@ class _StoryScreenState extends State<StoryScreen>
     );
   }
 }
+
