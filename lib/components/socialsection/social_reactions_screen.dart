@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'feed_reel_player_screen.dart';
 import '../../models/reel.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -117,22 +118,335 @@ class _VideoPlayerState extends State<VideoPlayer> {
   }
 }
 
-class SocialReactionsScreen extends StatefulWidget {
-  final Color accentColor;
-  const SocialReactionsScreen({super.key, required this.accentColor});
+class FeedProvider with ChangeNotifier {
+  List<Map<String, dynamic>> _feedPosts = [];
+  bool _isLoading = false;
+  bool _hasMorePosts = true;
+  int _postsPerPage = 10;
+  DocumentSnapshot? _lastDocument;
 
-  @override
-  SocialReactionsScreenState createState() => SocialReactionsScreenState();
+  List<Map<String, dynamic>> get feedPosts => _feedPosts;
+  bool get isLoading => _isLoading;
+  bool get hasMorePosts => _hasMorePosts;
+
+  Future<void> fetchPosts({bool isRefresh = false}) async {
+    if (_isLoading) return;
+    _isLoading = true;
+    notifyListeners();
+
+    try {
+      Query query = FirebaseFirestore.instance
+          .collection('feeds')
+          .orderBy('timestamp', descending: true)
+          .limit(_postsPerPage);
+
+      if (!isRefresh && _lastDocument != null) {
+        query = query.startAfterDocument(_lastDocument!);
+      }
+
+      final snapshot = await query.get();
+      final newPosts = snapshot.docs.map((doc) {
+        final data = doc.data() as Map<String, dynamic>;
+        return {
+          'id': doc.id,
+          'user': data['user'] as String? ?? '',
+          'post': data['post'] as String? ?? '',
+          'type': data['type'] as String? ?? '',
+          'likedBy': (data['likedBy'] as List?)
+                  ?.where((item) => item != null)
+                  .map((item) => item.toString())
+                  .toList() ??
+              [],
+          'title': data['title'] as String? ?? '',
+          'season': data['season'] as String? ?? '',
+          'episode': data['episode'] as String? ?? '',
+          'media': data['media'] as String? ?? '',
+          'mediaType': data['mediaType'] as String? ?? '',
+          'timestamp': data['timestamp'] as String? ?? '',
+          'userId': data['userId'] as String? ?? '',
+        };
+      }).toList();
+
+      if (isRefresh) {
+        _feedPosts.clear();
+      }
+
+      _feedPosts.addAll(newPosts);
+      _lastDocument = snapshot.docs.isNotEmpty ? snapshot.docs.last : null;
+      _hasMorePosts = newPosts.length == _postsPerPage;
+    } catch (e) {
+      debugPrint('Error fetching posts: $e');
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  void addPost(Map<String, dynamic> post) {
+    _feedPosts.insert(0, post);
+    notifyListeners();
+  }
+
+  void removePost(String id) {
+    _feedPosts.removeWhere((p) => p['id'] == id);
+    notifyListeners();
+  }
 }
 
-class SocialReactionsScreenState extends State<SocialReactionsScreen>
+class PostCardWidget extends StatelessWidget {
+  final Map<String, dynamic> post;
+  final List<Map<String, dynamic>> allPosts;
+  final Map<String, dynamic>? currentUser;
+  final List<Map<String, dynamic>> users;
+  final Color accentColor;
+  final Function(String) onDelete;
+  final Function(String, bool) onLike;
+  final Function(Map<String, dynamic>) onComment;
+  final Function(Map<String, dynamic>) onWatchParty;
+  final Function(Map<String, dynamic>) onSend;
+
+  const PostCardWidget({
+    Key? key,
+    required this.post,
+    required this.allPosts,
+    required this.currentUser,
+    required this.users,
+    required this.accentColor,
+    required this.onDelete,
+    required this.onLike,
+    required this.onComment,
+    required this.onWatchParty,
+    required this.onSend,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    final id = post['id'] as String? ?? '';
+    final userName = post['user'] as String? ?? 'Unknown';
+    final message = post['post'] as String? ?? '';
+    final likedBy = (post['likedBy'] as List?)
+            ?.where((item) => item != null)
+            .map((item) => item.toString())
+            .toList() ??
+        [];
+    final title = post['title'] as String? ?? '';
+    final season = post['season'] as String? ?? '';
+    final episode = post['episode'] as String? ?? '';
+    final media = post['media'] as String? ?? '';
+    final mediaType = post['mediaType'] as String? ?? '';
+    final userId = post['userId'] as String? ?? '';
+    final userRecord = users.firstWhere(
+      (u) => (u['id'] as String?) == userId,
+      orElse: () => {'username': userName, 'avatar': ''},
+    );
+    final username = userRecord['username'] as String? ?? 'Unknown';
+    final initial = username.isNotEmpty ? username[0].toUpperCase() : '?';
+    final avatarUrl = userRecord['avatar'] as String? ?? '';
+    final isLiked = likedBy.contains((currentUser?['id'] as String?) ?? '');
+
+    bool isValidImageUrl(String url) =>
+        url.startsWith('http') &&
+        (url.endsWith('.jpg') || url.endsWith('.jpeg') || url.endsWith('.png'));
+
+    return Card(
+      elevation: 4,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      child: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              accentColor.withOpacity(0.1),
+              accentColor.withOpacity(0.3),
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: accentColor.withOpacity(0.3)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ListTile(
+              leading: CircleAvatar(
+                radius: 20,
+                backgroundImage:
+                    avatarUrl.isNotEmpty ? NetworkImage(avatarUrl) : null,
+                child:
+                    Text(initial, style: const TextStyle(color: Colors.white)),
+              ),
+              title: Text(
+                username,
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                  shadows: [
+                    Shadow(
+                        color: Colors.black45,
+                        offset: Offset(1, 1),
+                        blurRadius: 2)
+                  ],
+                ),
+              ),
+            ),
+            if (media.isNotEmpty)
+              if (mediaType == 'photo' && isValidImageUrl(media))
+                CachedNetworkImage(
+                  imageUrl: media,
+                  height: 300,
+                  width: double.infinity,
+                  fit: BoxFit.cover,
+                  placeholder: (c, u) =>
+                      const Center(child: CircularProgressIndicator()),
+                  errorWidget: (c, u, e) => Container(
+                      height: 300,
+                      color: Colors.grey[300],
+                      child: const Icon(Icons.broken_image, size: 40)),
+                )
+              else if (mediaType == 'video')
+                SizedBox(
+                  height: 300,
+                  child: VideoPlayer(
+                    videoUrl: media,
+                    autoPlay: true,
+                    onTap: () {
+                      final videoPosts = allPosts
+                          .where((p) =>
+                              (p['mediaType'] as String?) == 'video' &&
+                              (p['media'] as String?)?.isNotEmpty == true)
+                          .map((p) => Reel(
+                                videoUrl: (p['media'] as String?) ?? '',
+                                movieTitle: (p['title'] as String?) ?? 'Video',
+                                movieDescription: (p['post'] as String?) ?? '',
+                              ))
+                          .toList();
+                      final idx =
+                          videoPosts.indexWhere((r) => r.videoUrl == media);
+                      if (idx != -1) {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => FeedReelPlayerScreen(
+                                reels: videoPosts, initialIndex: idx),
+                          ),
+                        );
+                      }
+                    },
+                  ),
+                )
+              else
+                Container(
+                    height: 300,
+                    color: Colors.grey[300],
+                    child: const Center(child: Icon(Icons.image, size: 40))),
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(message,
+                      style:
+                          const TextStyle(fontSize: 15, color: Colors.white70)),
+                  if (season.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        "Season: $season, Episode: ${episode.isNotEmpty ? episode : 'N/A'}",
+                        style: const TextStyle(
+                            fontStyle: FontStyle.italic, color: Colors.white70),
+                      ),
+                    ),
+                  if (title.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text("Movie: $title",
+                          style: const TextStyle(
+                              fontStyle: FontStyle.italic,
+                              color: Colors.white70)),
+                    ),
+                ],
+              ),
+            ),
+            const Divider(color: Colors.white54, height: 1),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                GestureDetector(
+                  onTap: () => onLike(id, isLiked),
+                  child: Row(
+                    children: [
+                      Icon(isLiked ? Icons.favorite : Icons.favorite_border,
+                          color: isLiked ? Colors.red : Colors.white70,
+                          size: 22),
+                      const SizedBox(width: 4),
+                      Text(likedBy.length.toString(),
+                          style: const TextStyle(
+                              color: Colors.white70, fontSize: 14)),
+                    ],
+                  ),
+                ),
+                IconButton(
+                    icon: const Icon(Icons.comment,
+                        color: Colors.white70, size: 22),
+                    onPressed: () => onComment(post)),
+                IconButton(
+                  icon: const Icon(Icons.connected_tv,
+                      color: Colors.white70, size: 22),
+                  onPressed: () => onWatchParty(post),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.send, color: Colors.white70, size: 22),
+                  onPressed: () => onSend(post),
+                ),
+                if (userId == ((currentUser?['id'] as String?) ?? ''))
+                  IconButton(
+                    icon: const Icon(Icons.delete, color: Colors.red, size: 22),
+                    onPressed: () => onDelete(id),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class SocialReactionsScreen extends StatelessWidget {
+  final Color accentColor;
+
+  const SocialReactionsScreen({Key? key, required this.accentColor})
+      : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => FeedProvider()),
+      ],
+      child: _SocialReactionsScreen(accentColor: accentColor),
+    );
+  }
+}
+
+class _SocialReactionsScreen extends StatefulWidget {
+  final Color accentColor;
+
+  const _SocialReactionsScreen({Key? key, required this.accentColor})
+      : super(key: key);
+
+  @override
+  _SocialReactionsScreenState createState() => _SocialReactionsScreenState();
+}
+
+class _SocialReactionsScreenState extends State<_SocialReactionsScreen>
     with WidgetsBindingObserver {
   int _selectedIndex = 0;
   List<Map<String, dynamic>> _users = [];
   List<String> _notifications = [];
   List<Map<String, dynamic>> _stories = [];
   int _movieStreak = 0;
-  List<Map<String, dynamic>> _feedPosts = [];
   Map<String, dynamic>? _currentUser;
   final SupabaseClient _supabase = Supabase.instance.client;
   bool _showRecommendations = true;
@@ -143,6 +457,14 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _initializeData();
+    _scrollController.addListener(() {
+      if (_scrollController.position.pixels ==
+              _scrollController.position.maxScrollExtent &&
+          !Provider.of<FeedProvider>(context, listen: false).isLoading &&
+          Provider.of<FeedProvider>(context, listen: false).hasMorePosts) {
+        Provider.of<FeedProvider>(context, listen: false).fetchPosts();
+      }
+    });
   }
 
   @override
@@ -164,41 +486,17 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
   Future<void> _initializeData() async {
     try {
       await Future.wait([
-        _checkMovieAccount()
-            .catchError((e) => debugPrint('Check movie account error: $e')),
-        _loadLocalData()
-            .catchError((e) => debugPrint('Load local data error: $e')),
-        _loadFeedPostsFromLocal()
-            .catchError((e) => debugPrint('Load feed posts error: $e')),
-        _loadUsers().catchError((e) => debugPrint('Load users error: $e')),
-        _loadUserData()
-            .catchError((e) => debugPrint('Load user data error: $e')),
+        _checkMovieAccount(),
+        _loadLocalData(),
+        _loadUsers(),
+        _loadUserData(),
       ]);
-
-      final sanitized = _feedPosts.map((post) {
-        return post.map((key, value) {
-          if (key == 'likedBy') {
-            return MapEntry(
-                key,
-                value is List
-                    ? value.map((e) => e.toString()).toList()
-                    : <String>[]);
-          } else if (value is List) {
-            return MapEntry(key, value.map((e) => e.toString()).toList());
-          } else {
-            return MapEntry(key, value?.toString() ?? '');
-          }
-        });
-      }).toList();
-
-      RealtimeFeedService.instance.updateFeedPosts(sanitized);
-      if (mounted) {
-        setState(() {
-          _feedPosts = sanitized;
-        });
-      }
+      await Provider.of<FeedProvider>(context, listen: false).fetchPosts();
     } catch (e) {
       debugPrint('Error initializing data: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to initialize data: $e')),
+      );
     }
   }
 
@@ -235,38 +533,6 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
     }
   }
 
-  Future<void> _loadFeedPostsFromLocal() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final feedPostsString = prefs.getString('feedPosts') ?? '[]';
-      final decoded = jsonDecode(feedPostsString);
-      if (decoded is List) {
-        _feedPosts = decoded.map((post) {
-          if (post is Map) {
-            return Map<String, dynamic>.from(post);
-          }
-          return <String, dynamic>{};
-        }).toList();
-      } else {
-        _feedPosts = [];
-      }
-      if (mounted) setState(() {});
-    } catch (e) {
-      debugPrint('Error loading feed posts: $e');
-      _feedPosts = [];
-      if (mounted) setState(() {});
-    }
-  }
-
-  Future<void> _saveFeedPostsToLocal() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('feedPosts', jsonEncode(_feedPosts));
-    } catch (e) {
-      debugPrint('Error saving feed posts: $e');
-    }
-  }
-
   Future<void> _loadUserData() async {
     try {
       final currentUser = FirebaseAuth.instance.currentUser;
@@ -283,19 +549,10 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
             _currentUser = _normalizeUserData(userData);
           });
         } else {
-          debugPrint('No user data found for UID: ${currentUser.uid}');
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("User data not found")),
-          );
+          throw Exception('No user data found for UID: ${currentUser.uid}');
         }
       } else {
-        if (!mounted) return;
-        setState(() {
-          _currentUser = null;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Please log in to view your profile")),
-        );
+        throw Exception('No current user logged in');
       }
     } catch (e) {
       debugPrint('Error loading user data: $e');
@@ -304,7 +561,7 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
         _currentUser = null;
       });
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Error loading profile: $e")),
+        SnackBar(content: Text('Error loading profile: $e')),
       );
     }
   }
@@ -315,10 +572,9 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
           await FirebaseFirestore.instance.collection('users').get();
       final rawUsers = snapshot.docs.map((doc) {
         final data = doc.data();
-        data['id'] = doc.id; // Add document ID
+        data['id'] = doc.id;
         return data;
       }).toList();
-      debugPrint('Raw users: $rawUsers'); // Log raw data for inspection
       _users = rawUsers
           .map((u) => _normalizeUserData(Map<String, dynamic>.from(u)))
           .toList();
@@ -377,13 +633,9 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
         if (mediaFile is html.File) {
           final fileSizeInBytes = mediaFile.size;
           if (type == 'photo' && fileSizeInBytes > 5 * 1024 * 1024) {
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                content: Text("Image too large, max 5MB allowed")));
-            return 'https://via.placeholder.com/150';
+            throw Exception('Image too large, max 5MB allowed');
           } else if (type == 'video' && fileSizeInBytes > 20 * 1024 * 1024) {
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                content: Text("Video too large, max 20MB allowed")));
-            return 'https://via.placeholder.com/150';
+            throw Exception('Video too large, max 20MB allowed');
           }
           final extension = mediaFile.name.split('.').last.toLowerCase();
           filePath = 'media/$mediaId.$extension';
@@ -398,21 +650,16 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
                 fileOptions: FileOptions(contentType: contentType),
               );
         } else {
-          debugPrint('Invalid file type for web platform');
-          return 'https://via.placeholder.com/150';
+          throw Exception('Invalid file type for web platform');
         }
       } else {
         if (mediaFile is XFile) {
           final file = File(mediaFile.path);
           int fileSizeInBytes = await file.length();
           if (type == 'photo' && fileSizeInBytes > 5 * 1024 * 1024) {
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                content: Text("Image too large, max 5MB allowed")));
-            return 'https://via.placeholder.com/150';
+            throw Exception('Image too large, max 5MB allowed');
           } else if (type == 'video' && fileSizeInBytes > 20 * 1024 * 1024) {
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                content: Text("Video too large, max 20MB allowed")));
-            return 'https://via.placeholder.com/150';
+            throw Exception('Video too large, max 20MB allowed');
           }
           final extension = p.extension(mediaFile.path).replaceFirst('.', '');
           filePath = 'media/$mediaId.$extension';
@@ -423,8 +670,7 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
                 fileOptions: FileOptions(contentType: contentType),
               );
         } else {
-          debugPrint('Invalid file type');
-          return 'https://via.placeholder.com/150';
+          throw Exception('Invalid file type');
         }
       }
 
@@ -432,6 +678,8 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
       return url.isNotEmpty ? url : 'https://via.placeholder.com/150';
     } catch (e) {
       debugPrint('Error uploading media: $e');
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Error uploading media: $e')));
       return 'https://via.placeholder.com/150';
     }
   }
@@ -515,6 +763,7 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
             setState(() {
               _stories.add(story);
               final newPost = {
+                'id': docRef.id,
                 'user': user,
                 'userId': _currentUser?['id']?.toString() ?? '',
                 'post': '$user posted a story.',
@@ -522,16 +771,19 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
                 'likedBy': [],
                 'timestamp': timestamp,
               };
-              _feedPosts.add(newPost);
+              Provider.of<FeedProvider>(context, listen: false)
+                  .addPost(newPost);
               RealtimeFeedService.instance.addPost(newPost);
             });
-            await _saveFeedPostsToLocal();
             await _saveLocalData();
           } else {
-            debugPrint('Failed to upload story media');
+            throw Exception('Failed to upload story media');
           }
         } catch (e) {
           debugPrint('Error posting story: $e');
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Failed to post story: $e')),
+          );
         } finally {
           if (mounted) Navigator.pop(context);
         }
@@ -752,7 +1004,7 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
             mediaUrl = await uploadMedia(
                 result['media'], result['mediaType']!, context);
             if (mediaUrl == 'https://via.placeholder.com/150') {
-              debugPrint('Failed to upload review media');
+              throw Exception('Failed to upload review media');
             }
           }
           if (!mounted) return;
@@ -779,14 +1031,15 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
           newPost['id'] = docRef.id;
           await FirebaseFirestore.instance.collection('feeds').add(newPost);
           setState(() {
-            _feedPosts.add(newPost);
-            RealtimeFeedService.instance.addPost(newPost);
+            Provider.of<FeedProvider>(context, listen: false).addPost(newPost);
             _notifications.add(
                 "${_currentUser?['username'] ?? 'CurrentUser'} posted a review for ${result['title']}");
           });
-          await _saveFeedPostsToLocal();
         } catch (e) {
           debugPrint('Error posting review: $e');
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Failed to post review: $e')),
+          );
         } finally {
           if (mounted) Navigator.pop(context);
         }
@@ -795,368 +1048,162 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
   }
 
   Widget _buildFeedTab() {
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: ElevatedButton.icon(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: widget.accentColor,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12)),
-              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 20),
-              minimumSize: const Size(double.infinity, 48),
-            ),
-            onPressed: _postMovieReview,
-            icon: const Icon(Icons.rate_review, size: 20),
-            label:
-                const Text("Post Movie Review", style: TextStyle(fontSize: 16)),
-          ),
-        ),
-        Expanded(
-          child: StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance.collection('feeds').snapshots(),
-            builder: (context, snapshot) {
-              if (snapshot.hasError) {
-                debugPrint('Error in feed stream: ${snapshot.error}');
-                return const Center(
-                    child: Text('Failed to load feed.',
-                        style: TextStyle(color: Colors.white)));
-              }
-              if (!snapshot.hasData) {
-                return const Center(child: CircularProgressIndicator());
-              }
-
-              final posts = snapshot.data!.docs.map((doc) {
-                final data = doc.data()! as Map<String, dynamic>;
-                return {
-                  'id': doc.id,
-                  'user': (data['user'] as String?) ?? '',
-                  'post': (data['post'] as String?) ?? '',
-                  'type': (data['type'] as String?) ?? '',
-                  'likedBy': (data['likedBy'] as List?)
-                          ?.where((item) => item != null)
-                          .map((item) => item.toString())
-                          .toList() ??
-                      [],
-                  'title': (data['title'] as String?) ?? '',
-                  'season': (data['season'] as String?) ?? '',
-                  'episode': (data['episode'] as String?) ?? '',
-                  'media': (data['media'] as String?) ?? '',
-                  'mediaType': (data['mediaType'] as String?) ?? '',
-                  'timestamp': (data['timestamp'] as String?) ?? '',
-                  'userId': (data['userId'] as String?) ?? '',
-                };
-              }).toList();
-
-              if (posts.isEmpty) {
-                return const Center(
-                    child: Text("No posts available.",
-                        style: TextStyle(color: Colors.white)));
-              }
-
-              return ListView.builder(
-                controller: _scrollController,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                itemCount: posts.length,
-                itemBuilder: (context, index) {
-                  try {
-                    return _buildPostCard(posts[index], posts);
-                  } catch (e) {
-                    debugPrint('Error building post card at index $index: $e');
-                    debugPrint('Post data: ${posts[index]}');
-                    return const SizedBox.shrink();
-                  }
-                },
-              );
-            },
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text("Recommended Movies",
-                      style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                          shadows: [
-                            Shadow(
-                                color: Colors.black45,
-                                offset: Offset(1, 1),
-                                blurRadius: 2)
-                          ])),
-                  IconButton(
-                    icon: Icon(_showRecommendations ? Icons.remove : Icons.add,
-                        color: Colors.white),
-                    onPressed: () => setState(
-                        () => _showRecommendations = !_showRecommendations),
-                  ),
-                ],
-              ),
-              Visibility(
-                visible: _showRecommendations,
-                child: const Column(
-                  children: [
-                    SizedBox(height: 12),
-                    TrendingMoviesWidget(),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildPostCard(
-    Map<String, dynamic> post,
-    List<Map<String, dynamic>> allPosts,
-  ) {
-    final id = post['id'] as String? ?? '';
-    final userName = post['user'] as String? ?? 'Unknown';
-    final message = post['post'] as String? ?? '';
-    final likedBy = (post['likedBy'] as List?)
-            ?.where((item) => item != null)
-            .map((item) => item.toString())
-            .toList() ??
-        [];
-    final title = post['title'] as String? ?? '';
-    final season = post['season'] as String? ?? '';
-    final episode = post['episode'] as String? ?? '';
-    final media = post['media'] as String? ?? '';
-    final mediaType = post['mediaType'] as String? ?? '';
-    final userId = post['userId'] as String? ?? '';
-    // 2) Lookup user record
-    final userRecord = _users.firstWhere(
-      (u) => (u['id'] as String?) == userId,
-      orElse: () => {'username': userName, 'avatar': ''},
-    );
-    final username = userRecord['username'] as String? ?? 'Unknown';
-    final initial = username.isNotEmpty ? username[0].toUpperCase() : '?';
-    final avatarUrl = userRecord['avatar'] as String? ?? '';
-
-    // 3) Like state
-    final isLiked = likedBy.contains((_currentUser?['id'] as String?) ?? '');
-
-    // 4) URL validator
-    bool isValidImageUrl(String url) =>
-        url.startsWith('http') &&
-        (url.endsWith('.jpg') || url.endsWith('.jpeg') || url.endsWith('.png'));
-
-    return Card(
-      elevation: 4,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      margin: const EdgeInsets.symmetric(vertical: 8),
-      child: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [
-              widget.accentColor.withOpacity(0.1),
-              widget.accentColor.withOpacity(0.3),
-            ],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: widget.accentColor.withOpacity(0.3)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+    return Consumer<FeedProvider>(
+      builder: (context, feedProvider, child) {
+        return Column(
           children: [
-            // Avatar + username
-            ListTile(
-              leading: CircleAvatar(
-                radius: 20,
-                backgroundImage:
-                    avatarUrl.isNotEmpty ? NetworkImage(avatarUrl) : null,
-                child:
-                    Text(initial, style: const TextStyle(color: Colors.white)),
-              ),
-              title: Text(
-                username,
-                style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                  shadows: [
-                    Shadow(
-                        color: Colors.black45,
-                        offset: Offset(1, 1),
-                        blurRadius: 2)
-                  ],
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: widget.accentColor,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  padding:
+                      const EdgeInsets.symmetric(vertical: 12, horizontal: 20),
+                  minimumSize: const Size(double.infinity, 48),
                 ),
+                onPressed: _postMovieReview,
+                icon: const Icon(Icons.rate_review, size: 20),
+                label: const Text("Post Movie Review",
+                    style: TextStyle(fontSize: 16)),
               ),
             ),
-
-            // Photo or video
-            if (media.isNotEmpty)
-              if (mediaType == 'photo' && isValidImageUrl(media))
-                CachedNetworkImage(
-                  imageUrl: media,
-                  height: 300,
-                  width: double.infinity,
-                  fit: BoxFit.cover,
-                  placeholder: (c, u) =>
-                      const Center(child: CircularProgressIndicator()),
-                  errorWidget: (c, u, e) => Container(
-                      height: 300,
-                      color: Colors.grey[300],
-                      child: const Icon(Icons.broken_image, size: 40)),
-                )
-              else if (mediaType == 'video')
-                SizedBox(
-                  height: 300,
-                  child: VideoPlayer(
-                    videoUrl: media,
-                    autoPlay: true,
-                    onTap: () {
-                      final videoPosts = allPosts
-                          .where((p) =>
-                              (p['mediaType'] as String?) == 'video' &&
-                              (p['media'] as String?)?.isNotEmpty == true)
-                          .map((p) => Reel(
-                                videoUrl: (p['media'] as String?) ?? '',
-                                movieTitle: (p['title'] as String?) ?? 'Video',
-                                movieDescription: (p['post'] as String?) ?? '',
-                              ))
-                          .toList();
-                      final idx =
-                          videoPosts.indexWhere((r) => r.videoUrl == media);
-                      if (idx != -1) {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => FeedReelPlayerScreen(
-                                reels: videoPosts, initialIndex: idx),
-                          ),
-                        );
-                      }
-                    },
-                  ),
-                )
-              else
-                Container(
-                    height: 300,
-                    color: Colors.grey[300],
-                    child: const Center(child: Icon(Icons.image, size: 40))),
-
-            // Text + meta
+            Expanded(
+              child: feedProvider.isLoading && feedProvider.feedPosts.isEmpty
+                  ? const Center(child: CircularProgressIndicator())
+                  : RefreshIndicator(
+                      onRefresh: () => feedProvider.fetchPosts(isRefresh: true),
+                      child: ListView.builder(
+                        controller: _scrollController,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 8),
+                        itemCount: feedProvider.feedPosts.length +
+                            (feedProvider.hasMorePosts ? 1 : 0),
+                        itemBuilder: (context, index) {
+                          if (index == feedProvider.feedPosts.length) {
+                            return const Center(
+                                child: Padding(
+                              padding: EdgeInsets.all(8.0),
+                              child: CircularProgressIndicator(),
+                            ));
+                          }
+                          try {
+                            return PostCardWidget(
+                              post: feedProvider.feedPosts[index],
+                              allPosts: feedProvider.feedPosts,
+                              currentUser: _currentUser,
+                              users: _users,
+                              accentColor: widget.accentColor,
+                              onDelete: (id) async {
+                                try {
+                                  await FirebaseFirestore.instance
+                                      .collection('feeds')
+                                      .doc(id)
+                                      .delete();
+                                  feedProvider.removePost(id);
+                                } catch (e) {
+                                  debugPrint('Error deleting post: $e');
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                        content:
+                                            Text('Failed to delete post: $e')),
+                                  );
+                                }
+                              },
+                              onLike: (id, isLiked) async {
+                                try {
+                                  final ref = FirebaseFirestore.instance
+                                      .collection('feeds')
+                                      .doc(id);
+                                  if (isLiked) {
+                                    await ref.update({
+                                      'likedBy': FieldValue.arrayRemove([
+                                        (_currentUser?['id'] as String?) ?? ''
+                                      ])
+                                    });
+                                  } else {
+                                    await ref.update({
+                                      'likedBy': FieldValue.arrayUnion([
+                                        (_currentUser?['id'] as String?) ?? ''
+                                      ])
+                                    });
+                                  }
+                                  // Note: UI updates via Firestore snapshot or manual state management
+                                } catch (e) {
+                                  debugPrint('Error liking post: $e');
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                        content:
+                                            Text('Failed to like post: $e')),
+                                  );
+                                }
+                              },
+                              onComment: _showComments,
+                              onWatchParty: _promptCreateWatchParty,
+                              onSend: (post) {
+                                final code = _generateWatchCode();
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                        content: Text(
+                                            "Started Watch Party: Code $code")));
+                                _notifications.add(
+                                    "${(_currentUser?['username'] as String?) ?? 'CurrentUser'} started a watch party with code $code");
+                              },
+                            );
+                          } catch (e) {
+                            debugPrint(
+                                'Error building post card at index $index: $e');
+                            return const SizedBox.shrink();
+                          }
+                        },
+                      ),
+                    ),
+            ),
             Padding(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.all(16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(message,
-                      style:
-                          const TextStyle(fontSize: 15, color: Colors.white70)),
-                  if (season.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 8),
-                      child: Text(
-                        "Season: $season, Episode: ${episode.isNotEmpty ? episode : 'N/A'}",
-                        style: const TextStyle(
-                            fontStyle: FontStyle.italic, color: Colors.white70),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text("Recommended Movies",
+                          style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                              shadows: [
+                                Shadow(
+                                    color: Colors.black45,
+                                    offset: Offset(1, 1),
+                                    blurRadius: 2)
+                              ])),
+                      IconButton(
+                        icon: Icon(
+                            _showRecommendations ? Icons.remove : Icons.add,
+                            color: Colors.white),
+                        onPressed: () => setState(
+                            () => _showRecommendations = !_showRecommendations),
                       ),
+                    ],
+                  ),
+                  Visibility(
+                    visible: _showRecommendations,
+                    child: const Column(
+                      children: [
+                        SizedBox(height: 12),
+                        TrendingMoviesWidget(),
+                      ],
                     ),
-                  if (title.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 8),
-                      child: Text("Movie: $title",
-                          style: const TextStyle(
-                              fontStyle: FontStyle.italic,
-                              color: Colors.white70)),
-                    ),
+                  ),
                 ],
               ),
             ),
-
-            const Divider(color: Colors.white54, height: 1),
-
-            // Actions
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                // Like
-                GestureDetector(
-                  onTap: () async {
-                    final ref =
-                        FirebaseFirestore.instance.collection('feeds').doc(id);
-                    if (isLiked) {
-                      await ref.update({
-                        'likedBy': FieldValue.arrayRemove(
-                            [(_currentUser?['id'] as String?) ?? ''])
-                      });
-                    } else {
-                      await ref.update({
-                        'likedBy': FieldValue.arrayUnion(
-                            [(_currentUser?['id'] as String?) ?? ''])
-                      });
-                    }
-                  },
-                  child: Row(
-                    children: [
-                      Icon(isLiked ? Icons.favorite : Icons.favorite_border,
-                          color: isLiked ? Colors.red : Colors.white70,
-                          size: 22),
-                      const SizedBox(width: 4),
-                      Text(likedBy.length.toString(),
-                          style: const TextStyle(
-                              color: Colors.white70, fontSize: 14)),
-                    ],
-                  ),
-                ),
-
-                // Comment
-                IconButton(
-                    icon: const Icon(Icons.comment,
-                        color: Colors.white70, size: 22),
-                    onPressed: () => _showComments(post)),
-
-                // Share
-                IconButton(
-                    icon: const Icon(Icons.share,
-                        color: Colors.white70, size: 22),
-                    onPressed: () => _sharePost(post)),
-
-                // Send / watch party
-                IconButton(
-                  icon: const Icon(Icons.send, color: Colors.white70, size: 22),
-                  onPressed: () {
-                    final code = _generateWatchCode();
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                        content: Text("Started Watch Party: Code $code")));
-                    _notifications.add(
-                        "${(_currentUser?['username'] as String?) ?? 'CurrentUser'} started a watch party with code $code");
-                  },
-                ),
-
-                // Delete (owner only)
-                if (userId == ((_currentUser?['id'] as String?) ?? ''))
-                  IconButton(
-                    icon: const Icon(Icons.delete, color: Colors.red, size: 22),
-                    onPressed: () async {
-                      await FirebaseFirestore.instance
-                          .collection('feeds')
-                          .doc(id)
-                          .delete();
-                      setState(
-                          () => _feedPosts.removeWhere((p) => p['id'] == id));
-                      await _saveFeedPostsToLocal();
-                    },
-                  ),
-              ],
-            ),
           ],
-        ),
-      ),
+        );
+      },
     );
   }
 
@@ -1308,6 +1355,36 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
 
   String _generateWatchCode() => (100000 + Random().nextInt(900000)).toString();
 
+  void _promptCreateWatchParty(Map<String, dynamic> post) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Create Watch Party"),
+        content:
+            const Text("Do you want to create a watch party for this post?"),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("No"),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              final code = _generateWatchCode();
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text("Watch Party created with code: $code")),
+              );
+              _notifications.add(
+                "${_currentUser?['username'] ?? 'CurrentUser'} created a watch party with code $code",
+              );
+            },
+            child: const Text("Yes"),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showComments(Map<String, dynamic> post) {
     showModalBottomSheet(
       context: context,
@@ -1411,6 +1488,11 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
                                 controller.clear();
                               } catch (e) {
                                 debugPrint('Error posting comment: $e');
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                      content:
+                                          Text('Failed to post comment: $e')),
+                                );
                               }
                             }
                           },
@@ -1427,11 +1509,6 @@ class SocialReactionsScreenState extends State<SocialReactionsScreen>
         );
       },
     );
-  }
-
-  void _sharePost(Map<String, dynamic> post) {
-    ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Shared post: ${post['post'] ?? 'Unknown'}")));
   }
 
   void _onTabTapped(int index) {
