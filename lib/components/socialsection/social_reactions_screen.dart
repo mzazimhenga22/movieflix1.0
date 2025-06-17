@@ -29,6 +29,7 @@ import 'notifications_section.dart';
 import 'chat_screen.dart';
 import 'package:video_player/video_player.dart' as vp;
 import 'package:path/path.dart' as p;
+import 'package:shimmer/shimmer.dart';
 
 class VideoPlayer extends StatefulWidget {
   final String videoUrl;
@@ -102,9 +103,10 @@ class _VideoPlayerState extends State<VideoPlayer> {
                   aspectRatio: _controller.value.aspectRatio,
                   child: vp.VideoPlayer(_controller),
                 )
-              : Container(
-                  color: Colors.black,
-                  child: const Center(child: CircularProgressIndicator()),
+              : Shimmer.fromColors(
+                  baseColor: Colors.grey[300]!,
+                  highlightColor: Colors.grey[100]!,
+                  child: Container(color: Colors.grey[300], height: 300),
                 ),
           if (!_isPlaying && _controller.value.isInitialized)
             const Icon(
@@ -297,9 +299,12 @@ class PostCardWidget extends StatelessWidget {
                   height: 300,
                   width: double.infinity,
                   fit: BoxFit.cover,
-                  placeholder: (c, u) =>
-                      const Center(child: CircularProgressIndicator()),
-                  errorWidget: (c, u, e) => Container(
+                  placeholder: (context, url) => Shimmer.fromColors(
+                    baseColor: Colors.grey[300]!,
+                    highlightColor: Colors.grey[100]!,
+                    child: Container(color: Colors.grey[300], height: 300),
+                  ),
+                  errorWidget: (context, url, error) => Container(
                       height: 300,
                       color: Colors.grey[300],
                       child: const Icon(Icons.broken_image, size: 40)),
@@ -421,11 +426,26 @@ class SocialReactionsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MultiProvider(
-      providers: [
-        ChangeNotifierProvider(create: (_) => FeedProvider()),
-      ],
-      child: _SocialReactionsScreen(accentColor: accentColor),
+    return Theme(
+      data: ThemeData(
+        primaryColor: accentColor,
+        scaffoldBackgroundColor: Colors.transparent,
+        textTheme: const TextTheme(
+          bodyMedium: TextStyle(color: Colors.white70),
+        ),
+        elevatedButtonTheme: ElevatedButtonThemeData(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: accentColor,
+            foregroundColor: Colors.white,
+          ),
+        ),
+      ),
+      child: MultiProvider(
+        providers: [
+          ChangeNotifierProvider(create: (_) => FeedProvider()),
+        ],
+        child: _SocialReactionsScreen(accentColor: accentColor),
+      ),
     );
   }
 }
@@ -1130,7 +1150,6 @@ class _SocialReactionsScreenState extends State<_SocialReactionsScreen>
                                       ])
                                     });
                                   }
-                                  // Note: UI updates via Firestore snapshot or manual state management
                                 } catch (e) {
                                   debugPrint('Error liking post: $e');
                                   ScaffoldMessenger.of(context).showSnackBar(
@@ -1418,7 +1437,12 @@ class _SocialReactionsScreenState extends State<_SocialReactionsScreen>
                       .map((doc) => doc.data() as Map<String, dynamic>)
                       .toList();
                   return Padding(
-                    padding: const EdgeInsets.all(16),
+                    padding: EdgeInsets.only(
+                      bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+                      left: 16,
+                      right: 16,
+                      top: 16,
+                    ),
                     child: Column(
                       children: [
                         const Text("Comments",
