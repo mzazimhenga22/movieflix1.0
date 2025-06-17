@@ -30,6 +30,7 @@ import 'chat_screen.dart';
 import 'package:video_player/video_player.dart' as vp;
 import 'package:path/path.dart' as p;
 import 'package:shimmer/shimmer.dart';
+import 'PostStoryScreen.dart';
 
 class VideoPlayer extends StatefulWidget {
   final String videoUrl;
@@ -1363,11 +1364,27 @@ class _SocialReactionsScreenState extends State<_SocialReactionsScreen>
               padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 20),
               minimumSize: const Size(double.infinity, 48),
             ),
-            onPressed: _postStory,
+            onPressed: () {
+              if (_currentUser != null) {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => PostStoryScreen(
+                      accentColor: widget.accentColor,
+                      currentUser: _currentUser!,
+                    ),
+                  ),
+                );
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text("User data not loaded")),
+                );
+              }
+            },
             icon: const Icon(Icons.add_a_photo, size: 20),
             label: const Text("Post Story", style: TextStyle(fontSize: 16)),
           ),
-        ),
+        )
       ],
     );
   }
