@@ -63,10 +63,12 @@ class _MessagesScreenState extends State<MessagesScreen> {
 
   Future<void> _loadConversations() async {
     try {
+      // Fetch conversations from local database
       final convos = await AuthDatabase.instance
           .getConversationsForUser(widget.currentUser['id']);
       final userMap = <String, Map<String, dynamic>>{};
 
+      // Collect all participant IDs to fetch user details
       final allParticipantIds = <String>{};
       for (var convo in convos) {
         final participantIds = (convo['participants'] as List?)
@@ -83,13 +85,13 @@ class _MessagesScreenState extends State<MessagesScreen> {
         }
       }
 
+      // Enhance conversation data with details like unread count and last message
       final convosWithDetails = await Future.wait(convos.map((convo) async {
         final participantIds = (convo['participants'] as List?)
                 ?.map((id) => id.toString())
                 .toList() ??
             [];
-        final participantsData =
-            participantIds.map((id) => userMap[id]!).toList();
+        final participantsData = participantIds.map((id) => userMap[id]!).toList();
         final unreadCount = await AuthDatabase.instance
             .getUnreadCount(convo['id'], widget.currentUser['id']);
         if (unreadCount > 0) {
@@ -103,8 +105,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
           'last_message': lastMessageData['message'] ?? 'No messages yet',
           'last_message_sender': lastMessageData['sender_username'] ?? '',
           'last_message_is_read': lastMessageData['is_read'] ?? false,
-          'last_message_timestamp':
-              lastMessageData['timestamp'] ?? DateTime.now(),
+          'last_message_timestamp': lastMessageData['timestamp'] ?? DateTime.now(),
         };
       }).toList());
 
@@ -114,9 +115,10 @@ class _MessagesScreenState extends State<MessagesScreen> {
           _userMap = userMap;
           _errorMessage = null;
 
+          // Sort conversations: pinned first, then by timestamp
           final pinnedConvos = _conversations
-              .where((convo) => _isUserInList(
-                  convo['pinned_users'], widget.currentUser['id']))
+              .where((convo) =>
+                  _isUserInList(convo['pinned_users'], widget.currentUser['id']))
               .toList();
           final nonPinnedConvos = _conversations
               .where((convo) => !_isUserInList(
@@ -142,6 +144,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
 
   Future<Map<String, dynamic>> _getLastMessage(String convoId) async {
     try {
+      // Attempt to get the last message from Firestore
       final snapshot = await FirebaseFirestore.instance
           .collection('conversations')
           .doc(convoId)
@@ -230,7 +233,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
           setState(() {
             _errorMessage = 'Firestore error: $error';
           });
-          _loadConversations();
+          _loadConversations(); // Fallback to local data on error
         }
       });
     } catch (e) {
@@ -245,6 +248,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
 
   Future<void> _updateLocalDatabase(List<Map<String, dynamic>> convos) async {
     try {
+      // Clear existing local conversations and update with new data
       await AuthDatabase.instance
           .clearConversationsForUser(widget.currentUser['id']);
       for (var convo in convos) {
@@ -252,16 +256,14 @@ class _MessagesScreenState extends State<MessagesScreen> {
           'id': convo['id'],
           'type': convo['type'],
           'group_name': convo['group_name'],
-          'participants': convo['participants'] is List
-              ? List.from(convo['participants'])
-              : [],
+          'participants':
+              convo['participants'] is List ? List.from(convo['participants']) : [],
           'username': convo['username'],
           'user_id': convo['user_id'],
           'last_message': convo['last_message'],
           'timestamp': convo['timestamp'],
-          'muted_users': convo['muted_users'] is List
-              ? List.from(convo['muted_users'])
-              : [],
+          'muted_users':
+              convo['muted_users'] is List ? List.from(convo['muted_users']) : [],
           'blocked_users': convo['blocked_users'] is List
               ? List.from(convo['blocked_users'])
               : [],
@@ -288,8 +290,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
     return user.exists ? (user.data()?['username'] ?? 'Unknown') : 'Unknown';
   }
 
-  void _showConversationOptions(
-      BuildContext context, Map<String, dynamic> convo) {
+  void _showConversationOptions(BuildContext context, Map<String, dynamic> convo) {
     final isPinned =
         _isUserInList(convo['pinned_users'], widget.currentUser['id']);
     final isMuted =
@@ -321,8 +322,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
           ListTile(
             leading: Icon(
                 isMuted ? Icons.notifications_active : Icons.notifications_off),
-            title:
-                Text(isMuted ? 'Unmute Notifications' : 'Mute Notifications'),
+            title: Text(isMuted ? 'Unmute Notifications' : 'Mute Notifications'),
             onTap: () {
               Navigator.pop(context);
               _toggleMuteConversation(convo);
@@ -555,8 +555,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
                                     style: ElevatedButton.styleFrom(
                                       backgroundColor: accentColor,
                                       shape: RoundedRectangleBorder(
-                                          borderRadius:
-                                              BorderRadius.circular(8)),
+                                          borderRadius: BorderRadius.circular(8)),
                                     ),
                                     child: const Text("Retry",
                                         style: TextStyle(color: Colors.white)),
@@ -587,8 +586,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
                                           Navigator.push(
                                             context,
                                             MaterialPageRoute(
-                                              builder: (context) =>
-                                                  NewChatScreen(
+                                              builder: (context) => NewChatScreen(
                                                 currentUser: widget.currentUser,
                                                 otherUsers: widget.otherUsers,
                                                 accentColor: accentColor,
@@ -603,8 +601,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
                                                   BorderRadius.circular(8)),
                                         ),
                                         child: const Text("Start a Chat",
-                                            style:
-                                                TextStyle(color: Colors.white)),
+                                            style: TextStyle(color: Colors.white)),
                                       ),
                                     ],
                                   ),
@@ -617,69 +614,55 @@ class _MessagesScreenState extends State<MessagesScreen> {
                                   itemBuilder: (context, index) {
                                     final convo = _conversations[index];
                                     final isMuted = _isUserInList(
-                                        convo['muted_users'],
-                                        widget.currentUser['id']);
+                                        convo['muted_users'], widget.currentUser['id']);
                                     final isPinned = _isUserInList(
-                                        convo['pinned_users'],
-                                        widget.currentUser['id']);
+                                        convo['pinned_users'], widget.currentUser['id']);
                                     final isBlocked = _isUserInList(
-                                        convo['blocked_users'],
-                                        widget.currentUser['id']);
-                                    final unreadCount =
-                                        convo['unread_count'] ?? 0;
-                                    final timestampString =
-                                        convo['timestamp']?.toString() ?? '';
+                                        convo['blocked_users'], widget.currentUser['id']);
+                                    final unreadCount = convo['unread_count'] ?? 0;
+                                    final timestamp = convo['last_message_timestamp'] as DateTime;
                                     String formattedTime = '';
-                                    if (timestampString.isNotEmpty) {
-                                      try {
-                                        final timestamp =
-                                            DateTime.parse(timestampString);
-                                        final now = DateTime.now();
-                                        if (timestamp.day == now.day &&
-                                            timestamp.month == now.month &&
-                                            timestamp.year == now.year) {
-                                          formattedTime = DateFormat('h:mm a')
-                                              .format(timestamp);
-                                        } else {
-                                          formattedTime = DateFormat('MMM d')
-                                              .format(timestamp);
-                                        }
-                                      } catch (e) {
-                                        formattedTime = '';
+                                    try {
+                                      final now = DateTime.now();
+                                      if (timestamp.day == now.day &&
+                                          timestamp.month == now.month &&
+                                          timestamp.year == now.year) {
+                                        formattedTime =
+                                            DateFormat('h:mm a').format(timestamp);
+                                      } else {
+                                        formattedTime =
+                                            DateFormat('MMM d').format(timestamp);
                                       }
+                                    } catch (e) {
+                                      formattedTime = '';
                                     }
 
                                     return GestureDetector(
                                       onLongPress: () =>
-                                          _showConversationOptions(
-                                              context, convo),
+                                          _showConversationOptions(context, convo),
                                       child: Container(
                                         decoration: BoxDecoration(
-                                          borderRadius:
-                                              BorderRadius.circular(12),
+                                          borderRadius: BorderRadius.circular(12),
                                           gradient: LinearGradient(
                                             colors: [
-                                              accentColor.withOpacity(
-                                                  isBlocked ? 0.1 : 0.2),
-                                              accentColor.withOpacity(
-                                                  isBlocked ? 0.2 : 0.4),
+                                              accentColor.withOpacity(isBlocked ? 0.1 : 0.2),
+                                              accentColor.withOpacity(isBlocked ? 0.2 : 0.4),
                                             ],
                                             begin: Alignment.topLeft,
                                             end: Alignment.bottomRight,
                                           ),
                                           boxShadow: [
                                             BoxShadow(
-                                              color: accentColor.withOpacity(
-                                                  isBlocked ? 0.3 : 0.6),
+                                              color: accentColor
+                                                  .withOpacity(isBlocked ? 0.3 : 0.6),
                                               blurRadius: 8,
                                               offset: const Offset(0, 4),
                                             ),
                                           ],
                                         ),
                                         child: ListTile(
-                                          contentPadding:
-                                              const EdgeInsets.symmetric(
-                                                  vertical: 8, horizontal: 12),
+                                          contentPadding: const EdgeInsets.symmetric(
+                                              vertical: 8, horizontal: 12),
                                           leading: Stack(
                                             children: [
                                               CircleAvatar(
@@ -690,8 +673,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
                                                       ? (convo['group_name']
                                                                   ?.isNotEmpty ??
                                                               false
-                                                          ? convo['group_name']
-                                                                  [0]
+                                                          ? convo['group_name'][0]
                                                               .toUpperCase()
                                                           : 'G')
                                                       : (convo['username']
@@ -710,8 +692,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
                                                   top: 0,
                                                   right: 0,
                                                   child: Icon(Icons.push_pin,
-                                                      size: 16,
-                                                      color: Colors.yellow),
+                                                      size: 16, color: Colors.yellow),
                                                 ),
                                             ],
                                           ),
@@ -719,42 +700,33 @@ class _MessagesScreenState extends State<MessagesScreen> {
                                             future: _getConversationName(convo),
                                             builder: (context, snapshot) {
                                               final name = snapshot.data ??
-                                                  (convo['username'] ??
-                                                      'Unknown');
+                                                  (convo['username'] ?? 'Unknown');
                                               return Row(
                                                 children: [
                                                   if (isMuted)
-                                                    const Icon(
-                                                        Icons.notifications_off,
+                                                    const Icon(Icons.notifications_off,
                                                         size: 16,
                                                         color: Colors.white70),
-                                                  if (isMuted)
-                                                    const SizedBox(width: 4),
+                                                  if (isMuted) const SizedBox(width: 4),
                                                   if (isBlocked)
                                                     const Icon(Icons.block,
-                                                        size: 16,
-                                                        color: Colors.red),
-                                                  if (isBlocked)
-                                                    const SizedBox(width: 4),
+                                                        size: 16, color: Colors.red),
+                                                  if (isBlocked) const SizedBox(width: 4),
                                                   Expanded(
                                                     child: Text(
                                                       name,
                                                       style: const TextStyle(
                                                         fontSize: 18,
-                                                        fontWeight:
-                                                            FontWeight.bold,
+                                                        fontWeight: FontWeight.bold,
                                                         color: Colors.white,
                                                         shadows: [
                                                           Shadow(
-                                                              color: Colors
-                                                                  .black54,
-                                                              offset:
-                                                                  Offset(2, 2),
+                                                              color: Colors.black54,
+                                                              offset: Offset(2, 2),
                                                               blurRadius: 4)
                                                         ],
                                                       ),
-                                                      overflow:
-                                                          TextOverflow.ellipsis,
+                                                      overflow: TextOverflow.ellipsis,
                                                     ),
                                                   ),
                                                 ],
@@ -763,15 +735,13 @@ class _MessagesScreenState extends State<MessagesScreen> {
                                           ),
                                           subtitle: Row(
                                             children: [
-                                              if (convo['last_message'] !=
-                                                  'No messages yet')
+                                              if (convo['last_message'] != 'No messages yet')
                                                 Icon(
                                                   convo['last_message_is_read']
                                                       ? Icons.done_all
                                                       : Icons.done,
                                                   size: 16,
-                                                  color: convo[
-                                                          'last_message_is_read']
+                                                  color: convo['last_message_is_read']
                                                       ? Colors.blue
                                                       : Colors.grey,
                                                 ),
@@ -780,8 +750,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
                                                 child: Text(
                                                   convo['type'] == 'group'
                                                       ? '${convo['last_message_sender']}: ${convo['last_message']}'
-                                                      : convo['last_message']
-                                                              ?.toString() ??
+                                                      : convo['last_message']?.toString() ??
                                                           'No messages yet',
                                                   style: TextStyle(
                                                     color: Colors.white70,
@@ -797,8 +766,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
                                                     ],
                                                   ),
                                                   maxLines: 1,
-                                                  overflow:
-                                                      TextOverflow.ellipsis,
+                                                  overflow: TextOverflow.ellipsis,
                                                 ),
                                               ),
                                             ],
@@ -809,8 +777,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
                                               if (formattedTime.isNotEmpty)
                                                 Padding(
                                                   padding:
-                                                      const EdgeInsets.only(
-                                                          right: 8.0),
+                                                      const EdgeInsets.only(right: 8.0),
                                                   child: Text(
                                                     formattedTime,
                                                     style: const TextStyle(
@@ -818,20 +785,16 @@ class _MessagesScreenState extends State<MessagesScreen> {
                                                         color: Colors.white70,
                                                         shadows: [
                                                           Shadow(
-                                                              color: Colors
-                                                                  .black54,
-                                                              offset:
-                                                                  Offset(2, 2),
+                                                              color: Colors.black54,
+                                                              offset: Offset(2, 2),
                                                               blurRadius: 4)
                                                         ]),
                                                   ),
                                                 ),
                                               if (unreadCount > 0)
                                                 Container(
-                                                  padding:
-                                                      const EdgeInsets.all(8),
-                                                  decoration:
-                                                      const BoxDecoration(
+                                                  padding: const EdgeInsets.all(8),
+                                                  decoration: const BoxDecoration(
                                                     color: Colors.green,
                                                     shape: BoxShape.circle,
                                                   ),
@@ -840,8 +803,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
                                                     style: const TextStyle(
                                                       color: Colors.white,
                                                       fontSize: 12,
-                                                      fontWeight:
-                                                          FontWeight.bold,
+                                                      fontWeight: FontWeight.bold,
                                                     ),
                                                   ),
                                                 ),
@@ -853,25 +815,19 @@ class _MessagesScreenState extends State<MessagesScreen> {
                                                 Navigator.push(
                                                   context,
                                                   MaterialPageRoute(
-                                                    builder: (context) =>
-                                                        GroupChatScreen(
-                                                      currentUser:
-                                                          widget.currentUser,
+                                                    builder: (context) => GroupChatScreen(
+                                                      currentUser: widget.currentUser,
                                                       conversation: convo,
-                                                      participants: convo[
-                                                          'participantsData'],
+                                                      participants:
+                                                          convo['participantsData'],
                                                     ),
                                                   ),
-                                                ).then((_) =>
-                                                    _loadConversations());
+                                                ).then((_) => _loadConversations());
                                               } else {
                                                 final otherUserId =
-                                                    convo['user_id']
-                                                            ?.toString() ??
-                                                        '';
+                                                    convo['user_id']?.toString() ?? '';
                                                 final otherUserName =
-                                                    convo['username']
-                                                            ?.toString() ??
+                                                    convo['username']?.toString() ??
                                                         'Unknown';
                                                 final otherUser = {
                                                   'id': otherUserId,
@@ -884,18 +840,15 @@ class _MessagesScreenState extends State<MessagesScreen> {
                                                   MaterialPageRoute(
                                                     builder: (context) =>
                                                         IndividualChatScreen(
-                                                      currentUser:
-                                                          widget.currentUser,
+                                                      currentUser: widget.currentUser,
                                                       otherUser: otherUser,
                                                       storyInteractions: [],
                                                     ),
                                                   ),
-                                                ).then((_) =>
-                                                    _loadConversations());
+                                                ).then((_) => _loadConversations());
                                               }
                                             } else {
-                                              ScaffoldMessenger.of(context)
-                                                  .showSnackBar(
+                                              ScaffoldMessenger.of(context).showSnackBar(
                                                 const SnackBar(
                                                     content: Text(
                                                         'This conversation is blocked')),
@@ -1030,8 +983,7 @@ class _NewChatScreenState extends State<NewChatScreen> {
         }
         final otherUser = _selectedUser!;
         final otherUserId = otherUser['id'].toString();
-        final sortedIds = [widget.currentUser['id'].toString(), otherUserId]
-          ..sort();
+        final sortedIds = [widget.currentUser['id'].toString(), otherUserId]..sort();
         String convoId = sortedIds.join('_');
         Map<String, dynamic> convoData = {
           'id': convoId,
@@ -1127,10 +1079,7 @@ class _NewChatScreenState extends State<NewChatScreen> {
                 gradient: RadialGradient(
                   center: const Alignment(0.64, 0.3),
                   radius: 1.0,
-                  colors: [
-                    widget.accentColor.withOpacity(0.3),
-                    Colors.transparent
-                  ],
+                  colors: [widget.accentColor.withOpacity(0.3), Colors.transparent],
                   stops: const [0.0, 0.55],
                 ),
               ),
@@ -1144,10 +1093,7 @@ class _NewChatScreenState extends State<NewChatScreen> {
                   gradient: RadialGradient(
                     center: Alignment.center,
                     radius: 1.5,
-                    colors: [
-                      widget.accentColor.withOpacity(0.3),
-                      Colors.transparent
-                    ],
+                    colors: [widget.accentColor.withOpacity(0.3), Colors.transparent],
                     stops: const [0.0, 1.0],
                   ),
                   boxShadow: [
@@ -1188,8 +1134,7 @@ class _NewChatScreenState extends State<NewChatScreen> {
                                 style: const TextStyle(color: Colors.white),
                                 decoration: InputDecoration(
                                   labelText: 'Group Name',
-                                  labelStyle:
-                                      const TextStyle(color: Colors.white70),
+                                  labelStyle: const TextStyle(color: Colors.white70),
                                   filled: true,
                                   fillColor: Colors.white.withOpacity(0.1),
                                   border: OutlineInputBorder(
@@ -1223,17 +1168,15 @@ class _NewChatScreenState extends State<NewChatScreen> {
                                 }
                                 if (!snapshot.hasData) {
                                   return const Center(
-                                      child: CircularProgressIndicator(
-                                          color: Colors.white));
+                                      child:
+                                          CircularProgressIndicator(color: Colors.white));
                                 }
                                 final users = snapshot.data!.docs
                                     .map((doc) {
-                                      final data =
-                                          doc.data() as Map<String, dynamic>;
+                                      final data = doc.data() as Map<String, dynamic>;
                                       return {
                                         'id': doc.id,
-                                        'username':
-                                            data['username'] ?? 'Unknown'
+                                        'username': data['username'] ?? 'Unknown'
                                       };
                                     })
                                     .where((user) =>
@@ -1264,8 +1207,7 @@ class _NewChatScreenState extends State<NewChatScreen> {
                                     final user = users[index];
                                     final userId = user['id'].toString();
                                     final isSelected = _isGroupChat
-                                        ? _selectedUsers
-                                            .any((u) => u['id'] == userId)
+                                        ? _selectedUsers.any((u) => u['id'] == userId)
                                         : _selectedUser != null &&
                                             _selectedUser!['id'] == userId;
                                     return Container(
@@ -1273,18 +1215,18 @@ class _NewChatScreenState extends State<NewChatScreen> {
                                         borderRadius: BorderRadius.circular(12),
                                         gradient: LinearGradient(
                                           colors: [
-                                            widget.accentColor.withOpacity(
-                                                isSelected ? 0.4 : 0.2),
-                                            widget.accentColor.withOpacity(
-                                                isSelected ? 0.6 : 0.4),
+                                            widget.accentColor
+                                                .withOpacity(isSelected ? 0.4 : 0.2),
+                                            widget.accentColor
+                                                .withOpacity(isSelected ? 0.6 : 0.4),
                                           ],
                                           begin: Alignment.topLeft,
                                           end: Alignment.bottomRight,
                                         ),
                                         boxShadow: [
                                           BoxShadow(
-                                            color: widget.accentColor
-                                                .withOpacity(0.6),
+                                            color:
+                                                widget.accentColor.withOpacity(0.6),
                                             blurRadius: 8,
                                             offset: const Offset(0, 4),
                                           ),
@@ -1294,13 +1236,10 @@ class _NewChatScreenState extends State<NewChatScreen> {
                                         leading: CircleAvatar(
                                           backgroundColor: widget.accentColor,
                                           child: Text(
-                                            user['username']?.isNotEmpty ??
-                                                    false
-                                                ? user['username'][0]
-                                                    .toUpperCase()
+                                            user['username']?.isNotEmpty ?? false
+                                                ? user['username'][0].toUpperCase()
                                                 : '?',
-                                            style: const TextStyle(
-                                                color: Colors.white),
+                                            style: const TextStyle(color: Colors.white),
                                           ),
                                         ),
                                         title: Text(
@@ -1316,17 +1255,15 @@ class _NewChatScreenState extends State<NewChatScreen> {
                                         ),
                                         trailing: _isGroupChat
                                             ? Checkbox(
-                                                value: _selectedUsers.any(
-                                                    (u) => u['id'] == userId),
+                                                value: _selectedUsers
+                                                    .any((u) => u['id'] == userId),
                                                 onChanged: (bool? value) {
                                                   setState(() {
                                                     if (value == true) {
                                                       _selectedUsers.add(user);
                                                     } else {
-                                                      _selectedUsers
-                                                          .removeWhere((u) =>
-                                                              u['id'] ==
-                                                              userId);
+                                                      _selectedUsers.removeWhere(
+                                                          (u) => u['id'] == userId);
                                                     }
                                                   });
                                                 },
@@ -1336,8 +1273,8 @@ class _NewChatScreenState extends State<NewChatScreen> {
                                         onTap: () {
                                           setState(() {
                                             if (_isGroupChat) {
-                                              if (_selectedUsers.any(
-                                                  (u) => u['id'] == userId)) {
+                                              if (_selectedUsers
+                                                  .any((u) => u['id'] == userId)) {
                                                 _selectedUsers.removeWhere(
                                                     (u) => u['id'] == userId);
                                               } else {
