@@ -236,6 +236,28 @@ class _StoryScreenState extends State<StoryScreen>
                         ),
                       ),
                     ),
+                    // Add caption display
+                    if (story['caption'] != null && story['caption'].isNotEmpty)
+                      Positioned(
+                        bottom: 60,
+                        left: 16,
+                        right: 16,
+                        child: Text(
+                          story['caption'],
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            shadows: [
+                              Shadow(
+                                color: Colors.black45,
+                                offset: Offset(1, 1),
+                                blurRadius: 2,
+                              ),
+                            ],
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
                   ],
                 );
               },
