@@ -8,6 +8,8 @@ import 'package:video_player/video_player.dart';
 import 'package:http/http.dart' as http;
 import 'package:movie_app/streaming_service.dart';
 import 'dart:io';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:convert';
 
 class Subtitle {
   final Duration start;
@@ -28,6 +30,7 @@ class MainVideoPlayer extends StatefulWidget {
   final String? localSubtitlePath;
   final bool isHls;
   final bool isLocal;
+  final Duration? initialPosition;
 
   const MainVideoPlayer({
     super.key,
@@ -41,19 +44,21 @@ class MainVideoPlayer extends StatefulWidget {
     this.localSubtitlePath,
     required this.isHls,
     this.isLocal = false,
+    this.initialPosition,
   });
 
   @override
   MainVideoPlayerState createState() => MainVideoPlayerState();
 }
 
-class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObserver {
+class MainVideoPlayerState extends State<MainVideoPlayer>
+    with WidgetsBindingObserver {
   late VideoPlayerController _controller;
   bool _isInitialized = false;
   String? _errorMessage;
   bool _isBuffering = false;
 
-  bool _showControls = false; // Controls start hidden
+  bool _showControls = false;
   Timer? _hideTimer;
 
   double _volume = 1.0;
@@ -112,12 +117,46 @@ class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObs
     super.didChangeAppLifecycleState(state);
     if (state == AppLifecycleState.paused) {
       _controller.pause();
+      _saveWatchHistory();
     } else if (state == AppLifecycleState.resumed) {
       _enforceLandscape();
       if (_controller.value.isInitialized && !_controller.value.isPlaying) {
         _controller.play();
       }
     }
+  }
+
+  Future<void> _saveWatchHistory() async {
+    if (!_controller.value.isInitialized) return;
+    final prefs = await SharedPreferences.getInstance();
+    List<String> jsonList = prefs.getStringList('watchHistory') ?? [];
+    final currentPosition = _controller.value.position.inSeconds;
+    final duration = _controller.value.duration.inSeconds;
+
+    final historyEntry = {
+      'id': widget.title.hashCode.toString(),
+      'title': widget.title,
+      'releaseYear': widget.releaseYear,
+      'media_type': widget.isFullSeason ? 'tv' : 'movie',
+      'position': currentPosition,
+      'duration': duration,
+      'resolution': _selectedQuality,
+      'subtitles': _showSubtitles,
+      'episodeFiles': widget.isFullSeason ? widget.episodeFiles : [],
+      'similarMovies': widget.similarMovies,
+      if (widget.isFullSeason) 'season': 1,
+      if (widget.isFullSeason)
+        'episode':
+            _currentEpisodeNumber ?? _extractEpisodeNumber(widget.videoPath),
+    };
+
+    jsonList.removeWhere((jsonStr) {
+      final map = json.decode(jsonStr);
+      return map['id'].toString() == historyEntry['id'];
+    });
+
+    jsonList.insert(0, json.encode(historyEntry));
+    await prefs.setStringList('watchHistory', jsonList);
   }
 
   Future<void> _enforceLandscape() async {
@@ -137,6 +176,8 @@ class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObs
     setState(() {
       _errorMessage = null;
       _currentVideoPath = widget.videoPath;
+      _currentEpisodeNumber =
+          widget.isFullSeason ? _extractEpisodeNumber(widget.videoPath) : null;
     });
   }
 
@@ -168,7 +209,8 @@ class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObs
           formatHint: widget.isHls ? VideoFormat.hls : VideoFormat.other,
           httpHeaders: {
             'Accept': '*/*',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
           },
         );
       }
@@ -181,7 +223,10 @@ class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObs
           _isInitialized = true;
           _volume = _controller.value.volume;
         });
-        await _controller.play(); // Autoplay on initialization
+        if (widget.initialPosition != null) {
+          await _controller.seekTo(widget.initialPosition!);
+        }
+        await _controller.play();
         await _controller.setPlaybackSpeed(_playbackSpeed);
       }
     } catch (error) {
@@ -281,7 +326,8 @@ class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObs
             });
           }
         } else {
-          debugPrint('Failed to fetch network subtitles: ${response.statusCode}');
+          debugPrint(
+              'Failed to fetch network subtitles: ${response.statusCode}');
         }
       } catch (e) {
         debugPrint('Failed to load network subtitles: $e');
@@ -291,7 +337,8 @@ class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObs
 
   List<Subtitle> _parseSrt(String srt) {
     final List<Subtitle> subtitles = [];
-    final regex = RegExp(r'(\d+)\s+(\d{2}:\d{2}:\d{2},\d{3})\s+-->\s+(\d{2}:\d{2}:\d{2},\d{3})\s+([\s\S]*?)(?=\n\n|\$)');
+    final regex = RegExp(
+        r'(\d+)\s+(\d{2}:\d{2}:\d{2},\d{3})\s+-->\s+(\d{2}:\d{2}:\d{2},\d{3})\s+([\s\S]*?)(?=\n\n|\$)');
     final matches = regex.allMatches(srt);
     for (final match in matches) {
       final start = _parseDuration(match.group(2)!);
@@ -313,11 +360,14 @@ class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObs
   }
 
   void _updateSubtitle() {
-    if (!_showSubtitles || _subtitles.isEmpty || !_controller.value.isInitialized) return;
+    if (!_showSubtitles ||
+        _subtitles.isEmpty ||
+        !_controller.value.isInitialized) return;
     final position = _controller.value.position;
     final current = _subtitles.firstWhere(
         (sub) => position >= sub.start && position <= sub.end,
-        orElse: () => Subtitle(start: Duration.zero, end: Duration.zero, text: ""));
+        orElse: () =>
+            Subtitle(start: Duration.zero, end: Duration.zero, text: ""));
     if (mounted) {
       setState(() {
         _currentSubtitle = current.text;
@@ -331,7 +381,8 @@ class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObs
       if (mounted && !_isLocked) {
         setState(() {
           _showControls = false;
-          if (_showNextEpisodeBar || _showRecommendationsBar) _showControls = true;
+          if (_showNextEpisodeBar || _showRecommendationsBar)
+            _showControls = true;
         });
       }
     });
@@ -392,11 +443,14 @@ class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObs
   }
 
   void _onHorizontalDragUpdate(DragUpdateDetails details) {
-    if (!_controller.value.isInitialized || _dragStartX == null || _dragStartPosition == null) return;
+    if (!_controller.value.isInitialized ||
+        _dragStartX == null ||
+        _dragStartPosition == null) return;
     final screenWidth = MediaQuery.of(context).size.width;
     final dx = details.globalPosition.dx - _dragStartX!;
     final offset = dx / screenWidth * _controller.value.duration.inSeconds;
-    final newPosition = (_dragStartPosition!.inSeconds + offset).clamp(0, _controller.value.duration.inSeconds);
+    final newPosition = (_dragStartPosition!.inSeconds + offset)
+        .clamp(0, _controller.value.duration.inSeconds);
     setState(() {
       _seekTargetDuration = Duration(seconds: newPosition.round());
       _showControls = true;
@@ -454,7 +508,9 @@ class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObs
     final quality = await showMenu<String>(
       context: context,
       position: const RelativeRect.fromLTRB(100, 100, 100, 100),
-      items: _qualities.map((q) => PopupMenuItem<String>(value: q, child: Text(q))).toList(),
+      items: _qualities
+          .map((q) => PopupMenuItem<String>(value: q, child: Text(q)))
+          .toList(),
     );
     if (quality != null && quality != _selectedQuality) {
       setState(() {
@@ -477,7 +533,8 @@ class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObs
       final newUrl = streamingInfo['url'] ?? _currentVideoPath;
       final newSubtitleUrl = streamingInfo['subtitleUrl'];
       final isHls = streamingInfo['type'] == 'm3u8';
-      await _switchVideo(newUrl, widget.title, newSubtitleUrl: newSubtitleUrl, isHls: isHls);
+      await _switchVideo(newUrl, widget.title,
+          newSubtitleUrl: newSubtitleUrl, isHls: isHls);
     } catch (e) {
       debugPrint('Failed to fetch new quality stream: $e');
       if (mounted) {
@@ -514,26 +571,38 @@ class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObs
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.black87,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (context) {
         return Padding(
           padding: const EdgeInsets.all(16),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text('Customize Player', style: TextStyle(color: Colors.white, fontSize: 18)),
+              const Text('Customize Player',
+                  style: TextStyle(color: Colors.white, fontSize: 18)),
               const SizedBox(height: 12),
               Row(
                 children: [
-                  const Text('Control Color:', style: TextStyle(color: Colors.white)),
+                  const Text('Control Color:',
+                      style: TextStyle(color: Colors.white)),
                   const SizedBox(width: 8),
                   DropdownButton<Color>(
                     value: _controlColor,
                     dropdownColor: Colors.black87,
                     items: const [
-                      DropdownMenuItem(value: Colors.white, child: Text('White', style: TextStyle(color: Colors.white))),
-                      DropdownMenuItem(value: Colors.yellow, child: Text('Yellow', style: TextStyle(color: Colors.yellow))),
-                      DropdownMenuItem(value: Colors.red, child: Text('Red', style: TextStyle(color: Colors.red))),
+                      DropdownMenuItem(
+                          value: Colors.white,
+                          child: Text('White',
+                              style: TextStyle(color: Colors.white))),
+                      DropdownMenuItem(
+                          value: Colors.yellow,
+                          child: Text('Yellow',
+                              style: TextStyle(color: Colors.yellow))),
+                      DropdownMenuItem(
+                          value: Colors.red,
+                          child:
+                              Text('Red', style: TextStyle(color: Colors.red))),
                     ],
                     onChanged: (color) {
                       if (mounted) {
@@ -548,7 +617,8 @@ class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObs
               const SizedBox(height: 16),
               Row(
                 children: [
-                  const Text('Icon Size:', style: TextStyle(color: Colors.white)),
+                  const Text('Icon Size:',
+                      style: TextStyle(color: Colors.white)),
                   const SizedBox(width: 16),
                   Expanded(
                     child: CupertinoSegmentedControl<String>(
@@ -557,8 +627,11 @@ class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObs
                         return MapEntry(
                           label,
                           Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-                            child: Text(label, style: const TextStyle(color: Colors.white), textAlign: TextAlign.center),
+                            padding: const EdgeInsets.symmetric(
+                                vertical: 8, horizontal: 4),
+                            child: Text(label,
+                                style: const TextStyle(color: Colors.white),
+                                textAlign: TextAlign.center),
                           ),
                         );
                       }),
@@ -575,7 +648,9 @@ class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObs
                 ],
               ),
               const SizedBox(height: 12),
-              ElevatedButton(onPressed: () => Navigator.pop(context), child: const Text('Close Settings')),
+              ElevatedButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Close Settings')),
             ],
           ),
         );
@@ -620,7 +695,9 @@ class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObs
   }
 
   void _fetchNextEpisode() {
-    if (_currentEpisodeNumber == null || !widget.isFullSeason || widget.episodeFiles.isEmpty) return;
+    if (_currentEpisodeNumber == null ||
+        !widget.isFullSeason ||
+        widget.episodeFiles.isEmpty) return;
     final currentIndex = widget.episodeFiles.indexOf(_currentVideoPath);
     if (currentIndex != -1 && currentIndex < widget.episodeFiles.length - 1) {
       final nextVideoPath = widget.episodeFiles[currentIndex + 1];
@@ -636,11 +713,15 @@ class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObs
     if (widget.similarMovies.isEmpty) return;
     final recommendation = widget.similarMovies.first;
     try {
-      final releaseDate = recommendation['release_date'] as String? ?? recommendation['first_air_date'] as String? ?? '1970-01-01';
+      final releaseDate = recommendation['release_date'] as String? ??
+          recommendation['first_air_date'] as String? ??
+          '1970-01-01';
       final releaseYear = int.parse(releaseDate.split('-')[0]);
       final streamingInfo = await StreamingService.getStreamingLink(
         tmdbId: recommendation['id'].toString(),
-        title: recommendation['title']?.toString() ?? recommendation['name']?.toString() ?? 'Untitled',
+        title: recommendation['title']?.toString() ??
+            recommendation['name']?.toString() ??
+            'Untitled',
         releaseYear: releaseYear,
         resolution: _selectedQuality,
         enableSubtitles: _showSubtitles,
@@ -648,7 +729,10 @@ class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObs
       if (mounted) {
         setState(() {
           _recommendationData = {
-            'title': streamingInfo['title'] ?? recommendation['title'] ?? recommendation['name'] ?? 'Untitled',
+            'title': streamingInfo['title'] ??
+                recommendation['title'] ??
+                recommendation['name'] ??
+                'Untitled',
             'videoPath': streamingInfo['url'] ?? '',
           };
         });
@@ -667,7 +751,8 @@ class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObs
   }
 
   void _playRecommendedMovie() {
-    if (_recommendationData == null || _recommendationData!['videoPath'].isEmpty) return;
+    if (_recommendationData == null ||
+        _recommendationData!['videoPath'].isEmpty) return;
     final nextVideoPath = _recommendationData!['videoPath'];
     final nextTitle = _recommendationData!['title'];
     if (nextVideoPath != null) {
@@ -690,7 +775,8 @@ class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObs
     await _loadSubtitles();
   }
 
-  Future<void> _switchVideo(String videoPath, String title, {String? newSubtitleUrl, bool isHls = false}) async {
+  Future<void> _switchVideo(String videoPath, String title,
+      {String? newSubtitleUrl, bool isHls = false}) async {
     if (!mounted) return;
     setState(() {
       _currentVideoPath = videoPath;
@@ -726,7 +812,12 @@ class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObs
     final episode = await showMenu<String>(
       context: context,
       position: const RelativeRect.fromLTRB(100, 100, 100, 100),
-      items: widget.episodeFiles.asMap().entries.map((entry) => PopupMenuItem<String>(value: entry.value, child: Text("Episode ${entry.key + 1}"))).toList(),
+      items: widget.episodeFiles
+          .asMap()
+          .entries
+          .map((entry) => PopupMenuItem<String>(
+              value: entry.value, child: Text("Episode ${entry.key + 1}")))
+          .toList(),
     );
     if (episode != null && episode != _currentVideoPath) {
       await _switchEpisode(episode);
@@ -735,7 +826,8 @@ class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObs
   }
 
   void _playNextEpisode() {
-    if (_nextEpisodeData == null || _nextEpisodeData!['videoPath'] == null) return;
+    if (_nextEpisodeData == null || _nextEpisodeData!['videoPath'] == null)
+      return;
     final nextVideoPath = _nextEpisodeData!['videoPath']!;
     _switchEpisode(nextVideoPath);
   }
@@ -754,14 +846,18 @@ class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObs
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               decoration: const BoxDecoration(
-                gradient: LinearGradient(colors: [Colors.black87, Colors.transparent], begin: Alignment.topCenter, end: Alignment.bottomCenter),
+                gradient: LinearGradient(
+                    colors: [Colors.black87, Colors.transparent],
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter),
               ),
               child: SafeArea(
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     IconButton(
-                      icon: Icon(Icons.arrow_back, color: _controlColor, size: _iconSize),
+                      icon: Icon(Icons.arrow_back,
+                          color: _controlColor, size: _iconSize),
                       onPressed: () {
                         if (mounted) Navigator.pop(context);
                       },
@@ -770,26 +866,37 @@ class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObs
                       child: Text(
                         _title,
                         textAlign: TextAlign.center,
-                        style: TextStyle(color: _controlColor, fontSize: 18, fontWeight: FontWeight.bold),
+                        style: TextStyle(
+                            color: _controlColor,
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold),
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
                     Row(
                       children: [
                         IconButton(
-                          icon: Icon(Icons.high_quality, color: _controlColor, size: _iconSize),
+                          icon: Icon(Icons.high_quality,
+                              color: _controlColor, size: _iconSize),
                           onPressed: _showQualityMenu,
                         ),
                         IconButton(
-                          icon: Icon(Icons.speed, color: _controlColor, size: _iconSize),
+                          icon: Icon(Icons.speed,
+                              color: _controlColor, size: _iconSize),
                           onPressed: _showSpeedMenu,
                         ),
                         IconButton(
-                          icon: Icon(Icons.settings, color: _controlColor, size: _iconSize),
+                          icon: Icon(Icons.settings,
+                              color: _controlColor, size: _iconSize),
                           onPressed: _showSettingsMenu,
                         ),
                         IconButton(
-                          icon: Icon(_showSubtitles ? Icons.closed_caption : Icons.closed_caption_off, color: _controlColor, size: _iconSize),
+                          icon: Icon(
+                              _showSubtitles
+                                  ? Icons.closed_caption
+                                  : Icons.closed_caption_off,
+                              color: _controlColor,
+                              size: _iconSize),
                           onPressed: () {
                             setState(() {
                               _showSubtitles = !_showSubtitles;
@@ -799,7 +906,8 @@ class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObs
                         ),
                         if (widget.isFullSeason)
                           IconButton(
-                            icon: Icon(Icons.list, color: _controlColor, size: _iconSize),
+                            icon: Icon(Icons.list,
+                                color: _controlColor, size: _iconSize),
                             onPressed: _showEpisodeMenu,
                           ),
                       ],
@@ -817,7 +925,15 @@ class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObs
               child: Text(
                 _currentSubtitle,
                 textAlign: TextAlign.center,
-                style: const TextStyle(color: Colors.white, fontSize: 16, shadows: [Shadow(offset: Offset(1, 1), color: Colors.black, blurRadius: 2)]),
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    shadows: [
+                      Shadow(
+                          offset: Offset(1, 1),
+                          color: Colors.black,
+                          blurRadius: 2)
+                    ]),
               ),
             ),
           Center(
@@ -828,14 +944,20 @@ class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObs
                   iconSize: _iconSize,
                   icon: Icon(Icons.replay_10, color: _controlColor),
                   onPressed: () {
-                    final newPos = _controller.value.position - const Duration(seconds: 10);
-                    _controller.seekTo(newPos > Duration.zero ? newPos : Duration.zero);
+                    final newPos = _controller.value.position -
+                        const Duration(seconds: 10);
+                    _controller.seekTo(
+                        newPos > Duration.zero ? newPos : Duration.zero);
                     _startHideTimer();
                   },
                 ),
                 IconButton(
                   iconSize: _iconSize + 24,
-                  icon: Icon(_controller.value.isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled, color: _controlColor),
+                  icon: Icon(
+                      _controller.value.isPlaying
+                          ? Icons.pause_circle_filled
+                          : Icons.play_circle_filled,
+                      color: _controlColor),
                   onPressed: () {
                     setState(() {
                       if (_controller.value.isPlaying) {
@@ -851,7 +973,8 @@ class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObs
                   iconSize: _iconSize,
                   icon: Icon(Icons.forward_10, color: _controlColor),
                   onPressed: () {
-                    final newPos = _controller.value.position + const Duration(seconds: 10);
+                    final newPos = _controller.value.position +
+                        const Duration(seconds: 10);
                     if (newPos < _controller.value.duration) {
                       _controller.seekTo(newPos);
                     }
@@ -862,9 +985,13 @@ class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObs
             ),
           ),
           if (_seekTargetDuration != null)
-            Center(child: Text(_formatDuration(_seekTargetDuration!), style: const TextStyle(color: Colors.white, fontSize: 24))),
+            Center(
+                child: Text(_formatDuration(_seekTargetDuration!),
+                    style: const TextStyle(color: Colors.white, fontSize: 24))),
           if (_seekFeedback != null)
-            Center(child: Text(_seekFeedback!, style: const TextStyle(color: Colors.white, fontSize: 24))),
+            Center(
+                child: Text(_seekFeedback!,
+                    style: const TextStyle(color: Colors.white, fontSize: 24))),
           if (_showNextEpisodeBar)
             Positioned(
               bottom: 100,
@@ -872,15 +999,22 @@ class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObs
               right: 20,
               child: Container(
                 padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(8)),
+                decoration: BoxDecoration(
+                    color: Colors.black87,
+                    borderRadius: BorderRadius.circular(8)),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      _nextEpisodeData != null ? 'Next: Episode ${_extractEpisodeNumber(_nextEpisodeData!['videoPath']!)}' : 'Loading next episode...',
+                      _nextEpisodeData != null
+                          ? 'Next: Episode ${_extractEpisodeNumber(_nextEpisodeData!['videoPath']!)}'
+                          : 'Loading next episode...',
                       style: const TextStyle(color: Colors.white, fontSize: 16),
                     ),
-                    ElevatedButton(onPressed: _nextEpisodeData != null ? _playNextEpisode : null, child: const Text('Play Now')),
+                    ElevatedButton(
+                        onPressed:
+                            _nextEpisodeData != null ? _playNextEpisode : null,
+                        child: const Text('Play Now')),
                   ],
                 ),
               ),
@@ -892,12 +1026,18 @@ class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObs
               right: 20,
               child: Container(
                 padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(8)),
+                decoration: BoxDecoration(
+                    color: Colors.black87,
+                    borderRadius: BorderRadius.circular(8)),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text('Up Next: ${_recommendationData!['title']}', style: const TextStyle(color: Colors.white, fontSize: 16)),
-                    ElevatedButton(onPressed: _playRecommendedMovie, child: const Text('Play Now')),
+                    Text('Up Next: ${_recommendationData!['title']}',
+                        style:
+                            const TextStyle(color: Colors.white, fontSize: 16)),
+                    ElevatedButton(
+                        onPressed: _playRecommendedMovie,
+                        child: const Text('Play Now')),
                   ],
                 ),
               ),
@@ -908,7 +1048,11 @@ class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObs
             right: 0,
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: const BoxDecoration(gradient: LinearGradient(colors: [Colors.transparent, Colors.black87], begin: Alignment.topCenter, end: Alignment.bottomCenter)),
+              decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                      colors: [Colors.transparent, Colors.black87],
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter)),
               child: SafeArea(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -916,22 +1060,31 @@ class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObs
                     VideoProgressIndicator(
                       _controller,
                       allowScrubbing: true,
-                      colors: const VideoProgressColors(playedColor: Colors.deepPurpleAccent, backgroundColor: Colors.grey, bufferedColor: Colors.white30),
+                      colors: const VideoProgressColors(
+                          playedColor: Colors.deepPurpleAccent,
+                          backgroundColor: Colors.grey,
+                          bufferedColor: Colors.white30),
                       padding: const EdgeInsets.symmetric(vertical: 8),
                     ),
                     const SizedBox(height: 8),
                     Row(
                       children: [
-                        Text(_formatDuration(_controller.value.position), style: TextStyle(color: _controlColor, fontSize: 14)),
+                        Text(_formatDuration(_controller.value.position),
+                            style:
+                                TextStyle(color: _controlColor, fontSize: 14)),
                         const Spacer(),
                         IconButton(
-                          icon: Icon(_isMuted ? Icons.volume_off : Icons.volume_up, color: _controlColor, size: _iconSize),
+                          icon: Icon(
+                              _isMuted ? Icons.volume_off : Icons.volume_up,
+                              color: _controlColor,
+                              size: _iconSize),
                           onPressed: () {
                             showDialog(
                               context: context,
                               builder: (context) => AlertDialog(
                                 backgroundColor: Colors.black87,
-                                title: const Text('Volume', style: TextStyle(color: Colors.white)),
+                                title: const Text('Volume',
+                                    style: TextStyle(color: Colors.white)),
                                 content: Slider(
                                   value: _volume,
                                   onChanged: (value) {
@@ -947,14 +1100,19 @@ class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObs
                                   activeColor: Colors.deepPurpleAccent,
                                 ),
                                 actions: [
-                                  TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close', style: TextStyle(color: Colors.white))),
+                                  TextButton(
+                                      onPressed: () => Navigator.pop(context),
+                                      child: const Text('Close',
+                                          style:
+                                              TextStyle(color: Colors.white))),
                                 ],
                               ),
                             ).whenComplete(_startHideTimer);
                           },
                         ),
                         IconButton(
-                          icon: Icon(Icons.lock, color: _controlColor, size: _iconSize),
+                          icon: Icon(Icons.lock,
+                              color: _controlColor, size: _iconSize),
                           onPressed: () {
                             setState(() {
                               _isLocked = true;
@@ -963,16 +1121,21 @@ class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObs
                           },
                         ),
                         IconButton(
-                          icon: Icon(Icons.fullscreen, color: _controlColor, size: _iconSize),
+                          icon: Icon(Icons.fullscreen,
+                              color: _controlColor, size: _iconSize),
                           onPressed: () {
                             if (mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Fullscreen toggled")));
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                      content: Text("Fullscreen toggled")));
                             }
                             _startHideTimer();
                           },
                         ),
                         const SizedBox(width: 8),
-                        Text(_formatDuration(_controller.value.duration), style: TextStyle(color: _controlColor, fontSize: 14)),
+                        Text(_formatDuration(_controller.value.duration),
+                            style:
+                                TextStyle(color: _controlColor, fontSize: 14)),
                       ],
                     ),
                   ],
@@ -994,15 +1157,20 @@ class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObs
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Text(_errorMessage!, style: const TextStyle(color: Colors.red, fontSize: 16), textAlign: TextAlign.center),
+                  Text(_errorMessage!,
+                      style: const TextStyle(color: Colors.red, fontSize: 16),
+                      textAlign: TextAlign.center),
                   const SizedBox(height: 16),
-                  ElevatedButton(onPressed: _retryLoad, child: const Text('Retry')),
+                  ElevatedButton(
+                      onPressed: _retryLoad, child: const Text('Retry')),
                 ],
               ),
             )
           : _isInitialized
               ? GestureDetector(
-                  onTap: _isLocked ? null : _toggleControls, // Single tap only shows controls
+                  onTap: _isLocked
+                      ? null
+                      : _toggleControls, // Single tap only shows controls
                   onDoubleTap: _isLocked
                       ? null
                       : () {
@@ -1010,13 +1178,17 @@ class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObs
                           final screenWidth = MediaQuery.of(context).size.width;
                           final tapX = _lastTapPosition!.dx;
                           if (tapX < screenWidth / 3) {
-                            final newPos = _controller.value.position - const Duration(seconds: 10);
-                            _controller.seekTo(newPos > Duration.zero ? newPos : Duration.zero);
+                            final newPos = _controller.value.position -
+                                const Duration(seconds: 10);
+                            _controller.seekTo(newPos > Duration.zero
+                                ? newPos
+                                : Duration.zero);
                             setState(() {
                               _seekFeedback = "-10s";
                             });
                           } else if (tapX > screenWidth * 2 / 3) {
-                            final newPos = _controller.value.position + const Duration(seconds: 10);
+                            final newPos = _controller.value.position +
+                                const Duration(seconds: 10);
                             if (newPos < _controller.value.duration) {
                               _controller.seekTo(newPos);
                             }
@@ -1033,26 +1205,36 @@ class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObs
                             }
                           });
                         },
-                  onTapDown: _isLocked ? null : (details) => _lastTapPosition = details.globalPosition,
-                  onHorizontalDragStart: _isLocked ? null : _onHorizontalDragStart,
-                  onHorizontalDragUpdate: _isLocked ? null : _onHorizontalDragUpdate,
+                  onTapDown: _isLocked
+                      ? null
+                      : (details) => _lastTapPosition = details.globalPosition,
+                  onHorizontalDragStart:
+                      _isLocked ? null : _onHorizontalDragStart,
+                  onHorizontalDragUpdate:
+                      _isLocked ? null : _onHorizontalDragUpdate,
                   onHorizontalDragEnd: _isLocked ? null : _onHorizontalDragEnd,
                   onVerticalDragStart: _isLocked ? null : _onVerticalDragStart,
-                  onVerticalDragUpdate: _isLocked ? null : _onVerticalDragUpdate,
+                  onVerticalDragUpdate:
+                      _isLocked ? null : _onVerticalDragUpdate,
                   onVerticalDragEnd: _isLocked ? null : _onVerticalDragEnd,
                   child: Stack(
                     children: [
                       SizedBox.expand(
                         child: FittedBox(
                           fit: BoxFit.contain,
-                          child: SizedBox(width: _controller.value.size.width, height: _controller.value.size.height, child: VideoPlayer(_controller)),
+                          child: SizedBox(
+                              width: _controller.value.size.width,
+                              height: _controller.value.size.height,
+                              child: VideoPlayer(_controller)),
                         ),
                       ),
-                      if (_isBuffering) const Center(child: CircularProgressIndicator()),
+                      if (_isBuffering)
+                        const Center(child: CircularProgressIndicator()),
                       if (_isLocked)
                         Center(
                           child: IconButton(
-                            icon: Icon(Icons.lock, color: _controlColor, size: _iconSize + 10),
+                            icon: Icon(Icons.lock,
+                                color: _controlColor, size: _iconSize + 10),
                             onPressed: () {
                               setState(() {
                                 _isLocked = false;
@@ -1068,8 +1250,10 @@ class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObs
                           top: MediaQuery.of(context).size.height / 2 - 50,
                           child: Column(
                             children: [
-                              const Icon(Icons.brightness_6, color: Colors.white, size: 32),
-                              Text('${(_brightness * 100).round()}%', style: const TextStyle(color: Colors.white)),
+                              const Icon(Icons.brightness_6,
+                                  color: Colors.white, size: 32),
+                              Text('${(_brightness * 100).round()}%',
+                                  style: const TextStyle(color: Colors.white)),
                             ],
                           ),
                         ),
@@ -1079,8 +1263,10 @@ class MainVideoPlayerState extends State<MainVideoPlayer> with WidgetsBindingObs
                           top: MediaQuery.of(context).size.height / 2 - 50,
                           child: Column(
                             children: [
-                              const Icon(Icons.volume_up, color: Colors.white, size: 32),
-                              Text('${(_volume * 100).round()}%', style: const TextStyle(color: Colors.white)),
+                              const Icon(Icons.volume_up,
+                                  color: Colors.white, size: 32),
+                              Text('${(_volume * 100).round()}%',
+                                  style: const TextStyle(color: Colors.white)),
                             ],
                           ),
                         ),
