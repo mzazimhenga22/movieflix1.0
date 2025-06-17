@@ -9,6 +9,11 @@ import 'stories.dart';
 import 'edit_profile_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
+import 'followers_following_screens.dart';
+import '../../utils/extensions.dart';
+import 'chat_screen.dart';
+
+// Assume ChatScreen, FollowersScreen, and FollowingScreen are defined elsewhere
 
 class UserProfileScreen extends StatefulWidget {
   final Map<String, dynamic> user;
@@ -30,6 +35,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   late Map<String, dynamic> _user;
   final TextEditingController _searchController = TextEditingController();
   List<Map<String, dynamic>> _stories = [];
+  List<Map<String, dynamic>> _allUsers = [];
+  List<String> _hiddenUserIds = [];
+  bool _isLoadingUsers = true;
   Timer? _debounce;
 
   @override
@@ -37,6 +45,12 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     super.initState();
     _user = _sanitizeUserData(widget.user);
     _loadStories();
+    _loadHiddenUsers();
+    _loadAllUsers().then((_) {
+      setState(() {
+        _isLoadingUsers = false;
+      });
+    });
     _searchController.addListener(_onSearchChanged);
     _checkAndShowReminder();
   }
@@ -56,6 +70,40 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
               const Duration(hours: 24))
           .toList();
     });
+  }
+
+  Future<void> _loadHiddenUsers() async {
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser != null) {
+      final snapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(currentUser.uid)
+          .collection('hidden_users')
+          .get();
+      setState(() {
+        _hiddenUserIds = snapshot.docs.map((doc) => doc.id).toList();
+      });
+    }
+  }
+
+  Future<void> _loadAllUsers() async {
+    final snapshot = await FirebaseFirestore.instance.collection('users').get();
+    setState(() {
+      _allUsers = snapshot.docs.map((doc) {
+        final data = doc.data();
+        return _sanitizeUserData({...data, 'id': doc.id});
+      }).toList();
+    });
+  }
+
+  List<Map<String, dynamic>> _searchUsers(String query) {
+    final lowerQuery = query.toLowerCase();
+    return _allUsers
+        .where((user) =>
+            user['username'].toLowerCase().startsWith(lowerQuery) &&
+            !_hiddenUserIds.contains(user['id']) &&
+            user['id'] != _user['id'])
+        .toList();
   }
 
   void _onSearchChanged() {
@@ -254,32 +302,22 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     await batch.commit();
   }
 
-  Future<List<Map<String, dynamic>>> _searchUsers(String query) async {
-    if (query.isEmpty) {
-      final snapshot =
-          await FirebaseFirestore.instance.collection('users').get();
-      return snapshot.docs.map((doc) {
-        final data = doc.data();
-        return _sanitizeUserData({...data, 'id': doc.id});
-      }).toList();
+  Future<void> _hideUser(String userIdToHide) async {
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser != null) {
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(currentUser.uid)
+          .collection('hidden_users')
+          .doc(userIdToHide)
+          .set({});
+      setState(() {
+        _hiddenUserIds.add(userIdToHide);
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('User hidden')),
+      );
     }
-    final snapshot = await FirebaseFirestore.instance
-        .collection('users')
-        .where('username', isGreaterThanOrEqualTo: query)
-        .where('username', isLessThanOrEqualTo: '$query\uf8ff')
-        .get();
-    return snapshot.docs.map((doc) {
-      final data = doc.data();
-      return _sanitizeUserData({...data, 'id': doc.id});
-    }).toList();
-  }
-
-  bool _hasActiveStory() {
-    return _stories.any((story) =>
-        story['userId'] == _user['id'] &&
-        DateTime.now().difference(DateTime.parse(
-                story['timestamp'] ?? DateTime.now().toIso8601String())) <
-            const Duration(hours: 24));
   }
 
   String _displayCount(dynamic count) {
@@ -474,15 +512,43 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                             Row(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                Text(
+                                GestureDetector(
+                                  onTap: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) => FollowersScreen(
+                                          userId: _user['id'],
+                                          accentColor: widget.accentColor,
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                  child: Text(
                                     'Followers: ${_displayCount(_user['followers_count'])}',
                                     style: const TextStyle(
-                                        color: Colors.white70, fontSize: 14)),
+                                        color: Colors.white70, fontSize: 14),
+                                  ),
+                                ),
                                 const SizedBox(width: 16),
-                                Text(
+                                GestureDetector(
+                                  onTap: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) => FollowingScreen(
+                                          userId: _user['id'],
+                                          accentColor: widget.accentColor,
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                  child: Text(
                                     'Following: ${_displayCount(_user['following_count'])}',
                                     style: const TextStyle(
-                                        color: Colors.white70, fontSize: 14)),
+                                        color: Colors.white70, fontSize: 14),
+                                  ),
+                                ),
                               ],
                             ),
                             const SizedBox(height: 12),
@@ -499,30 +565,73 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                             ),
                             const SizedBox(height: 16),
                             if (!isOwnProfile && currentUser != null)
-                              StreamBuilder<DocumentSnapshot>(
-                                stream: FirebaseFirestore.instance
-                                    .collection('users')
-                                    .doc(currentUser.uid)
-                                    .collection('following')
-                                    .doc(_user['id'])
-                                    .snapshots(),
-                                builder: (context, snapshot) {
-                                  if (snapshot.connectionState ==
-                                      ConnectionState.waiting) {
-                                    return const CircularProgressIndicator();
-                                  }
-                                  final isFollowing =
-                                      snapshot.data?.exists ?? false;
-                                  return ElevatedButton(
-                                    onPressed: () async {
-                                      if (isFollowing) {
-                                        await _unfollowUser(
-                                            currentUser.uid, _user['id']);
-                                      } else {
-                                        await _followUser(
-                                            currentUser.uid, _user['id']);
+                              Column(
+                                children: [
+                                  StreamBuilder<DocumentSnapshot>(
+                                    stream: FirebaseFirestore.instance
+                                        .collection('users')
+                                        .doc(currentUser.uid)
+                                        .collection('following')
+                                        .doc(_user['id'])
+                                        .snapshots(),
+                                    builder: (context, snapshot) {
+                                      if (snapshot.connectionState ==
+                                          ConnectionState.waiting) {
+                                        return const CircularProgressIndicator();
                                       }
+                                      final isFollowing =
+                                          snapshot.data?.exists ?? false;
+                                      return ElevatedButton(
+                                        onPressed: () async {
+                                          if (isFollowing) {
+                                            await _unfollowUser(
+                                                currentUser.uid, _user['id']);
+                                          } else {
+                                            await _followUser(
+                                                currentUser.uid, _user['id']);
+                                          }
+                                        },
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: widget.accentColor,
+                                          foregroundColor: Colors.white,
+                                          shape: RoundedRectangleBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(12)),
+                                          padding: const EdgeInsets.symmetric(
+                                              vertical: 12, horizontal: 20),
+                                          minimumSize:
+                                              const Size(double.infinity, 48),
+                                        ),
+                                        child: Text(
+                                            isFollowing ? 'Unfollow' : 'Follow',
+                                            style:
+                                                const TextStyle(fontSize: 16)),
+                                      );
                                     },
+                                  ),
+                                  const SizedBox(height: 16),
+                                  ElevatedButton.icon(
+                                    onPressed: () {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (context) =>
+                                              IndividualChatScreen(
+                                            // Updated to IndividualChatScreen
+                                            currentUser: {
+                                              'id': currentUser!.uid,
+                                              'username':
+                                                  currentUser.displayName ??
+                                                      'User',
+                                            },
+                                            otherUser: _user,
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                    icon: const Icon(Icons.message, size: 20),
+                                    label: const Text("Message",
+                                        style: TextStyle(fontSize: 16)),
                                     style: ElevatedButton.styleFrom(
                                       backgroundColor: widget.accentColor,
                                       foregroundColor: Colors.white,
@@ -534,11 +643,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                       minimumSize:
                                           const Size(double.infinity, 48),
                                     ),
-                                    child: Text(
-                                        isFollowing ? 'Unfollow' : 'Follow',
-                                        style: const TextStyle(fontSize: 16)),
-                                  );
-                                },
+                                  ),
+                                ],
                               ),
                             if (isOwnProfile && currentUser != null)
                               Padding(
@@ -873,6 +979,76 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                 );
                               },
                             ),
+                            if (isOwnProfile)
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const SizedBox(height: 16),
+                                  const Text(
+                                    "Recent Watches",
+                                    style: TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white,
+                                      shadows: [
+                                        Shadow(
+                                            color: Colors.black45,
+                                            offset: Offset(1, 1),
+                                            blurRadius: 2)
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  StreamBuilder<QuerySnapshot>(
+                                    stream: FirebaseFirestore.instance
+                                        .collection('users')
+                                        .doc(_user['id'])
+                                        .collection('watch_history')
+                                        .orderBy('timestamp', descending: true)
+                                        .limit(5)
+                                        .snapshots(),
+                                    builder: (context, snapshot) {
+                                      if (snapshot.hasError) {
+                                        return Text('Error: ${snapshot.error}',
+                                            style: const TextStyle(
+                                                color: Colors.white));
+                                      }
+                                      if (!snapshot.hasData) {
+                                        return const Center(
+                                            child: CircularProgressIndicator());
+                                      }
+                                      final watches = snapshot.data!.docs
+                                          .map((doc) => doc.data()
+                                              as Map<String, dynamic>)
+                                          .toList();
+                                      if (watches.isEmpty) {
+                                        return const Text("No recent watches.",
+                                            style: TextStyle(
+                                                color: Colors.white70));
+                                      }
+                                      return ListView.builder(
+                                        shrinkWrap: true,
+                                        physics:
+                                            const NeverScrollableScrollPhysics(),
+                                        itemCount: watches.length,
+                                        itemBuilder: (context, index) {
+                                          final watch = watches[index];
+                                          return ListTile(
+                                            title: Text(
+                                                watch['title'] ?? 'Unknown',
+                                                style: const TextStyle(
+                                                    color: Colors.white)),
+                                            subtitle: Text(
+                                                'Watched on ${watch['timestamp'] ?? ''}',
+                                                style: const TextStyle(
+                                                    color: Colors.white70)),
+                                          );
+                                        },
+                                      );
+                                    },
+                                  ),
+                                ],
+                              ),
                             const SizedBox(height: 16),
                             const Divider(color: Colors.white54, thickness: 1),
                             const SizedBox(height: 16),
@@ -908,132 +1084,198 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                               ),
                             ),
                             const SizedBox(height: 12),
-                            FutureBuilder<List<Map<String, dynamic>>>(
-                              future:
-                                  _searchUsers(_searchController.text.trim()),
-                              builder: (context, snapshot) {
-                                if (snapshot.connectionState ==
-                                    ConnectionState.waiting) {
-                                  return const CircularProgressIndicator();
-                                }
-                                if (snapshot.hasError) {
-                                  return Text('Error: ${snapshot.error}',
-                                      style:
-                                          const TextStyle(color: Colors.white));
-                                }
-                                final users = (snapshot.data ?? [])
-                                    .where((u) => u['id'] != _user['id'])
-                                    .toList();
-                                if (users.isEmpty) {
-                                  return const Text("No users found.",
-                                      style: TextStyle(color: Colors.white));
-                                }
-                                return ListView.separated(
-                                  shrinkWrap: true,
-                                  physics: const NeverScrollableScrollPhysics(),
-                                  itemCount: users.length,
-                                  separatorBuilder: (context, index) =>
-                                      const Divider(color: Colors.white54),
-                                  itemBuilder: (context, index) {
-                                    final otherUser = users[index];
-                                    final otherUserName = otherUser['username'];
-                                    return ListTile(
-                                      leading: CircleAvatar(
-                                        backgroundColor: widget.accentColor,
-                                        backgroundImage: otherUser['avatar']
-                                                    ?.isNotEmpty ==
-                                                true
-                                            ? NetworkImage(otherUser['avatar'])
-                                            : null,
-                                        child:
-                                            otherUser['avatar']?.isNotEmpty !=
-                                                    true
-                                                ? Text(
-                                                    otherUserName.isNotEmpty
-                                                        ? otherUserName[0]
-                                                            .toUpperCase()
-                                                        : "G",
-                                                    style: const TextStyle(
-                                                        color: Colors.white),
-                                                  )
-                                                : null,
-                                      ),
-                                      title: Text(otherUserName,
-                                          style: const TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 16)),
-                                      trailing: currentUser != null
-                                          ? StreamBuilder<DocumentSnapshot>(
-                                              stream: FirebaseFirestore.instance
-                                                  .collection('users')
-                                                  .doc(currentUser.uid)
-                                                  .collection('following')
-                                                  .doc(otherUser['id'])
-                                                  .snapshots(),
-                                              builder: (context, snapshot) {
-                                                if (snapshot.connectionState ==
-                                                    ConnectionState.waiting) {
-                                                  return const SizedBox(
-                                                      width: 24,
-                                                      height: 24,
-                                                      child:
-                                                          CircularProgressIndicator(
-                                                              strokeWidth: 2));
-                                                }
-                                                final isFollowing =
-                                                    snapshot.data?.exists ??
-                                                        false;
-                                                return ElevatedButton(
-                                                  onPressed: () async {
-                                                    if (isFollowing) {
-                                                      await _unfollowUser(
-                                                          currentUser.uid,
-                                                          otherUser['id']);
-                                                    } else {
-                                                      await _followUser(
-                                                          currentUser.uid,
-                                                          otherUser['id']);
-                                                    }
+                            if (_isLoadingUsers)
+                              const Padding(
+                                padding: EdgeInsets.symmetric(vertical: 16),
+                                child:
+                                    Center(child: CircularProgressIndicator()),
+                              )
+                            else
+                              Builder(
+                                builder: (context) {
+                                  final users = _searchUsers(
+                                      _searchController.text.trim());
+                                  if (users.isEmpty) {
+                                    return const Text("No users found.",
+                                        style: TextStyle(color: Colors.white));
+                                  }
+                                  return ListView.separated(
+                                    shrinkWrap: true,
+                                    physics:
+                                        const NeverScrollableScrollPhysics(),
+                                    itemCount: users.length,
+                                    separatorBuilder: (context, index) =>
+                                        const Divider(color: Colors.white54),
+                                    itemBuilder: (context, index) {
+                                      final otherUser = users[index];
+                                      return ListTile(
+                                        leading: CircleAvatar(
+                                          backgroundColor: widget.accentColor,
+                                          backgroundImage:
+                                              otherUser['avatar']?.isNotEmpty ==
+                                                      true
+                                                  ? NetworkImage(
+                                                      otherUser['avatar'])
+                                                  : null,
+                                          child: otherUser['avatar']
+                                                      ?.isNotEmpty !=
+                                                  true
+                                              ? Text(
+                                                  otherUser['username']
+                                                          .isNotEmpty
+                                                      ? otherUser['username'][0]
+                                                          .toUpperCase()
+                                                      : "G",
+                                                  style: const TextStyle(
+                                                      color: Colors.white),
+                                                )
+                                              : null,
+                                        ),
+                                        title: Text(otherUser['username'],
+                                            style: const TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 16)),
+                                        onTap: () => Navigator.push(
+                                          context,
+                                          MaterialPageRoute(
+                                            builder: (context) =>
+                                                UserProfileScreen(
+                                              user: otherUser,
+                                              showAppBar: true,
+                                              accentColor: widget.accentColor,
+                                            ),
+                                          ),
+                                        ),
+                                        onLongPress: () {
+                                          showDialog(
+                                            context: context,
+                                            builder: (context) => AlertDialog(
+                                              backgroundColor:
+                                                  const Color.fromARGB(
+                                                      255, 17, 25, 40),
+                                              title: Text(
+                                                  'Hide ${otherUser['username']}',
+                                                  style: const TextStyle(
+                                                      color: Colors.white)),
+                                              content: const Text(
+                                                  'Do you want to hide this user from search results?',
+                                                  style: TextStyle(
+                                                      color: Colors.white70)),
+                                              actions: [
+                                                TextButton(
+                                                  onPressed: () =>
+                                                      Navigator.pop(context),
+                                                  child: const Text('Cancel',
+                                                      style: TextStyle(
+                                                          color:
+                                                              Colors.white70)),
+                                                ),
+                                                ElevatedButton(
+                                                  onPressed: () {
+                                                    _hideUser(otherUser['id']);
+                                                    Navigator.pop(context);
                                                   },
                                                   style:
                                                       ElevatedButton.styleFrom(
-                                                    backgroundColor: isFollowing
-                                                        ? Colors.grey[700]
-                                                        : widget.accentColor,
-                                                    foregroundColor:
-                                                        Colors.white,
-                                                    padding: const EdgeInsets
-                                                            .symmetric(
-                                                        horizontal: 12),
-                                                    minimumSize:
-                                                        const Size(80, 32),
-                                                  ),
-                                                  child: Text(
-                                                      isFollowing
-                                                          ? 'Unfollow'
-                                                          : 'Follow',
-                                                      style: const TextStyle(
-                                                          fontSize: 12)),
-                                                );
-                                              },
-                                            )
-                                          : null,
-                                      onTap: () => Navigator.push(
-                                        context,
-                                        MaterialPageRoute(
-                                          builder: (context) =>
-                                              UserProfileScreen(
-                                            user: otherUser,
-                                            showAppBar: true,
-                                            accentColor: widget.accentColor,
-                                          ),
-                                        ),
-                                      ),
-                                    );
+                                                          backgroundColor:
+                                                              Colors.red),
+                                                  child: const Text('Hide',
+                                                      style: TextStyle(
+                                                          color: Colors.white)),
+                                                ),
+                                              ],
+                                            ),
+                                          );
+                                        },
+                                        trailing: currentUser != null
+                                            ? StreamBuilder<DocumentSnapshot>(
+                                                stream: FirebaseFirestore
+                                                    .instance
+                                                    .collection('users')
+                                                    .doc(currentUser.uid)
+                                                    .collection('following')
+                                                    .doc(otherUser['id'])
+                                                    .snapshots(),
+                                                builder: (context, snapshot) {
+                                                  if (snapshot
+                                                          .connectionState ==
+                                                      ConnectionState.waiting) {
+                                                    return const SizedBox(
+                                                        width: 24,
+                                                        height: 24,
+                                                        child:
+                                                            CircularProgressIndicator(
+                                                                strokeWidth:
+                                                                    2));
+                                                  }
+                                                  final isFollowing =
+                                                      snapshot.data?.exists ??
+                                                          false;
+                                                  return ElevatedButton(
+                                                    onPressed: () async {
+                                                      if (isFollowing) {
+                                                        await _unfollowUser(
+                                                            currentUser.uid,
+                                                            otherUser['id']);
+                                                      } else {
+                                                        await _followUser(
+                                                            currentUser.uid,
+                                                            otherUser['id']);
+                                                      }
+                                                    },
+                                                    style: ElevatedButton
+                                                        .styleFrom(
+                                                      backgroundColor:
+                                                          isFollowing
+                                                              ? Colors.grey[700]
+                                                              : widget
+                                                                  .accentColor,
+                                                      foregroundColor:
+                                                          Colors.white,
+                                                      padding: const EdgeInsets
+                                                              .symmetric(
+                                                          horizontal: 12),
+                                                      minimumSize:
+                                                          const Size(80, 32),
+                                                    ),
+                                                    child: Text(
+                                                        isFollowing
+                                                            ? 'Unfollow'
+                                                            : 'Follow',
+                                                        style: const TextStyle(
+                                                            fontSize: 12)),
+                                                  );
+                                                },
+                                              )
+                                            : null,
+                                      );
+                                    },
+                                  );
+                                },
+                              ),
+                            if (isOwnProfile)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 16),
+                                child: ElevatedButton(
+                                  onPressed: () async {
+                                    await FirebaseAuth.instance.signOut();
+                                    // Navigate to login screen or handle logout
                                   },
-                                );
-                              },
-                            ),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.red,
+                                    foregroundColor: Colors.white,
+                                    shape: RoundedRectangleBorder(
+                                        borderRadius:
+                                            BorderRadius.circular(12)),
+                                    padding: const EdgeInsets.symmetric(
+                                        vertical: 12, horizontal: 20),
+                                    minimumSize:
+                                        const Size(double.infinity, 48),
+                                  ),
+                                  child: const Text("Log Out",
+                                      style: TextStyle(fontSize: 16)),
+                                ),
+                              ),
                           ],
                         ),
                       ),
@@ -1047,11 +1289,12 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       ),
     );
   }
-}
 
-// Extension to capitalize the first letter of a string
-extension StringExtension on String {
-  String capitalize() {
-    return "${this[0].toUpperCase()}${substring(1).toLowerCase()}";
+  bool _hasActiveStory() {
+    return _stories.any((story) =>
+        story['userId'] == _user['id'] &&
+        DateTime.now().difference(DateTime.parse(
+                story['timestamp'] ?? DateTime.now().toIso8601String())) <
+            const Duration(hours: 24));
   }
 }
