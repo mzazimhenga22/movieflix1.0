@@ -24,6 +24,7 @@ import 'dart:convert';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'chat_widgets.dart';
 import 'package:crypto/crypto.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 
 class IndividualChatScreen extends StatefulWidget {
   final Map<String, dynamic> currentUser;
@@ -31,17 +32,17 @@ class IndividualChatScreen extends StatefulWidget {
   final List<Map<String, dynamic>> storyInteractions;
 
   const IndividualChatScreen({
-    Key? key,
+    super.key,
     required this.currentUser,
     required this.otherUser,
     this.storyInteractions = const [],
-  }) : super(key: key);
+  });
 
   @override
-  _IndividualChatScreensState createState() => _IndividualChatScreensState();
+  _IndividualChatScreenState createState() => _IndividualChatScreenState();
 }
 
-class _IndividualChatScreensState extends State<IndividualChatScreen>
+class _IndividualChatScreenState extends State<IndividualChatScreen>
     with SingleTickerProviderStateMixin {
   List<Map<String, dynamic>> _messages = [];
   late List<Map<String, dynamic>> _interactions;
@@ -78,6 +79,7 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
 
   StreamSubscription<DocumentSnapshot>? _typingSubscription;
   StreamSubscription<QuerySnapshot>? _messagesSubscription;
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
 
   bool _showEmojiPicker = false;
   final AudioPlayer _audioPlayer = AudioPlayer();
@@ -106,13 +108,11 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
     _loadMessages().then((_) {
       _markAllMessagesAsRead();
       WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
-      if (_messages.isNotEmpty) {
-        print("Loaded ${_messages.length} messages");
-      }
     });
     _loadBackgroundSettings();
 
-    _listenToFirestoreMessages();
+    _setupListeners();
+    _monitorConnectivity();
 
     _loadDraft();
 
@@ -121,8 +121,11 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
         setState(() => _currentlyPlayingId = null);
       }
     });
+  }
 
-    final conversationId = _getConversationId();
+  Future<void> _setupListeners() async {
+    final conversationId = await _getConversationId();
+
     _typingSubscription = _firestore
         .collection('conversations')
         .doc(conversationId)
@@ -136,6 +139,57 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
           typingUsers.contains(widget.otherUser['id'].toString()));
     });
 
+    _messagesSubscription = _firestore
+        .collection('conversations')
+        .doc(conversationId)
+        .collection('messages')
+        .orderBy('timestamp', descending: false)
+        .snapshots()
+        .listen((snapshot) async {
+      for (var doc in snapshot.docChanges
+          .where((change) => change.type == DocumentChangeType.added)) {
+        final data = doc.doc.data()!;
+        final messageData = _normalizeMessageData({
+          ...data,
+          'id': doc.doc.id,
+          'firestore_id': doc.doc.id,
+          'conversation_id': conversationId,
+        });
+
+        await AuthDatabase.instance.createMessage(messageData);
+
+        String messageText = messageData['message'];
+        if (messageData['type'] == 'text' && messageData['iv'] != null) {
+          try {
+            final iv = encrypt.IV.fromBase64(messageData['iv']);
+            messageText = _encrypter.decrypt64(messageText, iv: iv);
+          } catch (e) {
+            messageText = '[Decryption Failed]';
+          }
+        }
+
+        final decryptedMessage = {...messageData, 'message': messageText};
+        final existingIndex =
+            _messages.indexWhere((m) => m['id'] == decryptedMessage['id']);
+        if (existingIndex != -1) {
+          setState(() => _messages[existingIndex] = decryptedMessage);
+        } else {
+          setState(() {
+            _messages.add(decryptedMessage);
+            if (decryptedMessage['sender_id'] == widget.otherUser['id'].toString() &&
+                decryptedMessage['is_read'] == false) {
+              final index = _messages.indexOf(decryptedMessage);
+              if (index != -1) {
+                _markMessageAsRead(index);
+              }
+            }
+          });
+        }
+      }
+      _scrollToBottom();
+    }, onError: (e) => ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error listening to messages: $e'))));
+
     _callsSubscription = _firestore
         .collection('calls')
         .where('receiver_id', isEqualTo: widget.currentUser['id'].toString())
@@ -145,26 +199,79 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
       for (var doc in snapshot.docChanges) {
         if (doc.type == DocumentChangeType.added) {
           final data = doc.doc.data() as Map<String, dynamic>;
-          final callerId = data['caller_id'];
-          final isVideo = data['is_video'];
-          final offer = data['offer'];
-          await _acceptCall(doc.doc.id, offer, isVideo);
+          _showCallDialog(doc.doc.id, data);
         }
       }
     });
   }
 
-  String _getConversationId() {
-    final sortedIds = [
-      widget.currentUser['id'].toString(),
-      widget.otherUser['id'].toString()
-    ]..sort();
-    return sortedIds.join('_');
+Future<String> _getConversationId() async {
+  final currentUserId = widget.currentUser['id']?.toString();
+  final otherUserId = widget.otherUser['id']?.toString();
+  print('Current user ID: $currentUserId');
+  print('Other user ID: $otherUserId');
+  if (currentUserId == null || otherUserId == null || 
+      currentUserId.isEmpty || otherUserId.isEmpty) {
+    throw Exception('Invalid user IDs: current=$currentUserId, other=$otherUserId');
+  }
+  final sortedIds = [currentUserId, otherUserId]..sort();
+  final conversationId = sortedIds.join('_');
+  print('Conversation ID: $conversationId');
+  final exists = await AuthDatabase.instance.conversationExists(conversationId);
+  if (!exists) {
+    await _ensureConversationExists();
+  }
+  return conversationId;
+}
+
+  Future<void> _ensureConversationExists() async {
+    final conversationId = await _getConversationId();
+    final conversation = {
+      'id': conversationId,
+      'participants': [
+        widget.currentUser['id'].toString(),
+        widget.otherUser['id'].toString(),
+      ],
+      'last_message': '',
+      'timestamp': DateTime.now().toIso8601String(),
+    };
+    try {
+      await AuthDatabase.instance.insertConversation(conversation);
+      await _firestore.collection('conversations').doc(conversationId).set(
+        conversation,
+        SetOptions(merge: true),
+      );
+    } catch (e) {
+      throw Exception('Failed to ensure conversation exists: $e');
+    }
+  }
+
+  Map<String, dynamic> _normalizeMessageData(Map<String, dynamic> data) {
+    return {
+      'id': data['id']?.toString() ?? '',
+      'firestore_id': data['firestore_id']?.toString() ?? data['id']?.toString() ?? '',
+      'conversation_id': data['conversation_id']?.toString() ?? '',
+      'sender_id': data['sender_id']?.toString() ?? '',
+      'receiver_id': data['receiver_id']?.toString() ?? '',
+      'message': data['message']?.toString() ?? '',
+      'iv': data['iv']?.toString(),
+      'type': data['type']?.toString() ?? 'text',
+      'is_read': data['is_read'] == true ? 1 : 0,
+      'is_pinned': data['is_pinned'] == true ? 1 : 0,
+      'replied_to': data['replied_to']?.toString(),
+      'reactions': data['reactions'] ?? {},
+      'status': data['status']?.toString() ?? 'sent',
+      'created_at': data['timestamp']?.toDate()?.toIso8601String() ?? data['created_at']?.toString() ?? DateTime.now().toIso8601String(),
+      'delivered_at': data['delivered_at']?.toString(),
+      'read_at': data['read_at']?.toString(),
+      'scheduled_at': data['scheduled_at']?.toString(),
+      'delete_after': data['delete_after']?.toString(),
+    };
   }
 
   void _initializeEncryption() {
-    final conversationId = _getConversationId();
-    final keyBytes = sha256.convert(utf8.encode(conversationId)).bytes;
+    final keyString = "${widget.currentUser['id']}_${widget.otherUser['id']}";
+    final keyBytes = sha256.convert(utf8.encode(keyString)).bytes;
     _encryptionKey = encrypt.Key(Uint8List.fromList(keyBytes));
     _encrypter = encrypt.Encrypter(encrypt.AES(_encryptionKey));
   }
@@ -177,26 +284,11 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
     });
   }
 
-  Future<void> _loadBackgroundSettings() async {
-    final conversationId = _getConversationId();
-    final settings = await _localDb!.query('chat_settings',
-        where: 'conversation_id = ?', whereArgs: [conversationId]);
-    if (settings.isNotEmpty) {
-      final setting = settings.first;
-      setState(() {
-        _chatBgColor = setting['bg_color'] != null
-            ? Color(setting['bg_color'] as int)
-            : Colors.white;
-        _chatBgImage = setting['bg_image'] as String?;
-        _cinematicTheme = setting['cinematic_theme'] as String?;
-      });
-    } else {
-      setState(() {
-        _chatBgColor = Colors.white;
-        _chatBgImage = null;
-        _cinematicTheme = null;
-      });
+  Future<Database> getLocalDb() async {
+    if (_localDb == null) {
+      await _initializeLocalDatabase();
     }
+    return _localDb!;
   }
 
   Future<void> _initializeNotifications() async {
@@ -212,7 +304,7 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
       vsync: this,
       duration: const Duration(milliseconds: 1000),
     )..repeat(reverse: true);
-    _pulseAnimation = Tween<double>(begin: 1.0, end: 1.5).animate(
+_pulseAnimation = Tween<double>(begin: 1.0, end: 1.5).animate(
       CurvedAnimation(parent: _animationController!, curve: Curves.easeInOut),
     );
   }
@@ -223,7 +315,17 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
     await Permission.microphone.request();
   }
 
-  void _handleStoryInteraction(String type, Map<String, dynamic> data) {
+void _monitorConnectivity() {
+  _connectivitySubscription = Connectivity()
+      .onConnectivityChanged
+      .listen((List<ConnectivityResult> results) async {
+    if (results.any((result) => result != ConnectivityResult.none)) {
+      await _syncOfflineMessages();
+    }
+  });
+}
+
+  Future<void> _handleStoryInteraction(String type, Map<String, dynamic> data) async {
     if (type == 'reply') {
       final replyText = data['content'];
       final storyId = data['storyId'];
@@ -233,6 +335,7 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
         'id': const Uuid().v4(),
         'sender_id': widget.currentUser['id'].toString(),
         'receiver_id': data['storyUserId'].toString(),
+        'conversation_id': await _getConversationId(),
         'message': encryptedText,
         'iv': base64Encode(iv.bytes),
         'created_at': DateTime.now().toIso8601String(),
@@ -243,6 +346,10 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
         'reactions': {},
         'is_story_reply': true,
         'story_id': storyId,
+        'status': 'pending',
+        'delivered_at': null,
+        'read_at': null,
+        'isPending': true,
       };
       _sendMessageToBoth(newMessage);
     } else {
@@ -260,11 +367,8 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
 
   Future<void> _loadMessages() async {
     try {
-      List<Map<String, dynamic>> messages =
-          await AuthDatabase.instance.getMessagesBetween(
-        widget.currentUser['id'].toString(),
-        widget.otherUser['id'].toString(),
-      );
+      List<Map<String, dynamic>> messages = await AuthDatabase.instance
+          .getMessagesByConversationId(await _getConversationId());
       final decryptedMessages = messages.map((message) {
         final reactions = message['reactions'] is String
             ? (message['reactions'].isEmpty
@@ -272,59 +376,42 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
                 : jsonDecode(message['reactions']))
             : (message['reactions'] ?? {});
         if (message['type'] == 'text' && message['iv'] != null) {
-          debugPrint(
-              'Retrieved IV for message ${message['id']}: ${message['iv']}');
-          if (RegExp(r'^[A-Za-z0-9+/=]+$').hasMatch(message['iv'])) {
-            try {
-              final iv = encrypt.IV.fromBase64(message['iv']);
-              final decryptedText =
-                  _encrypter.decrypt64(message['message'], iv: iv);
-              return {
-                ...message,
-                'message': decryptedText,
-                'reactions': reactions,
-                'is_story_reply': message['is_story_reply'] ?? false,
-                'story_id': message['story_id'],
-              };
-            } catch (e) {
-              debugPrint('Decryption failed for message ${message['id']}: $e');
-              return {
-                ...message,
-                'message': '[Decryption Failed: $e]',
-                'reactions': reactions,
-                'is_story_reply': message['is_story_reply'] ?? false,
-                'story_id': message['story_id'],
-              };
-            }
-          } else {
-            debugPrint(
-                'Invalid IV for message ${message['id']}: ${message['iv']}');
+          try {
+            final iv = encrypt.IV.fromBase64(message['iv']);
+            final decryptedText =
+                _encrypter.decrypt64(message['message'], iv: iv);
             return {
               ...message,
-              'message': '[Invalid IV]',
+              'message': decryptedText,
               'reactions': reactions,
               'is_story_reply': message['is_story_reply'] ?? false,
               'story_id': message['story_id'],
+            };
+          } catch (e) {
+            return {
+              ...message,
+              'message': '[Decryption Failed]',
+              'reactions': reactions,
             };
           }
         }
         return {
           ...message,
           'reactions': reactions,
-          'is_story_reply': message['is_story_reply'] ?? false,
-          'story_id': message['story_id'],
         };
       }).toList();
       if (mounted) setState(() => _messages = decryptedMessages);
       _syncOfflineMessages();
     } catch (e) {
-      debugPrint('Error loading messages: $e');
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Error loading messages: $e')));
     }
   }
 
   Future<void> _loadDraft() async {
-    final conversationId = _getConversationId();
-    final drafts = await _localDb!.query('drafts',
+    final db = await getLocalDb();
+    final conversationId = await _getConversationId();
+    final drafts = await db.query('drafts',
         where: 'conversation_id = ?', whereArgs: [conversationId]);
     if (drafts.isNotEmpty) {
       setState(() => _draftMessage = drafts.first['content'] as String?);
@@ -333,70 +420,195 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
   }
 
   void _saveDraft(String text) async {
-    final conversationId = _getConversationId();
-    await _localDb!.insert(
+    final db = await getLocalDb();
+    final conversationId = await _getConversationId();
+    await db.insert(
         'drafts', {'conversation_id': conversationId, 'content': text},
         conflictAlgorithm: ConflictAlgorithm.replace);
     _draftMessage = text;
   }
 
-  void _sendMessage() async {
-    if (_isSending) return;
-    _isSending = true;
-    final plaintext = _controller.text.trim();
-    if (plaintext.isEmpty) {
-      _isSending = false;
-      return;
+void _sendMessage() async {
+  if (_isSending) return;
+  _isSending = true;
+  final plaintext = _controller.text.trim();
+  if (plaintext.isEmpty) {
+    _isSending = false;
+    return;
+  }
+
+  await _ensureConversationExists();
+  final iv = encrypt.IV.fromSecureRandom(16);
+  final encryptedText = _encrypter.encrypt(plaintext, iv: iv).base64;
+
+  final message = {
+    'id': const Uuid().v4(),
+    'sender_id': widget.currentUser['id'].toString(),
+    'receiver_id': widget.otherUser['id'].toString(),
+    'conversation_id': await _getConversationId(),
+    'message': encryptedText,
+    'iv': base64Encode(iv.bytes),
+    'created_at': DateTime.now().toIso8601String(),
+    'is_read': false,
+    'is_pinned': false,
+    'replied_to': _replyingToMessageId,
+    'type': 'text',
+    'reactions': {},
+    'status': 'pending',
+    'delivered_at': null,
+    'read_at': null,
+    'isPending': true,
+  };
+
+  setState(() {
+    _messages.add({...message, 'message': plaintext, 'status': 'pending'});
+    _scrollToBottom();
+  });
+
+  try {
+    await _sendMessageToBoth(message);
+    setState(() {
+      final index = _messages.indexWhere((m) => m['id'] == message['id']);
+      if (index != -1) _messages[index]['status'] = 'sent';
+    });
+    _controller.clear();
+    _saveDraft('');
+    setState(() => _replyingToMessageId = null);
+  } catch (e) {
+    setState(() {
+      final index = _messages.indexWhere((m) => m['id'] == message['id']);
+      if (index != -1) _messages[index]['status'] = 'failed';
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Failed to send message: $e')),
+    );
+  } finally {
+    _isSending = false;
+  }
+}
+
+Future<void> _sendMessageToBoth(Map<String, dynamic> message) async {
+  final connectivityResult = await Connectivity().checkConnectivity();
+  bool isOffline = !connectivityResult.contains(ConnectivityResult.wifi) &&
+      !connectivityResult.contains(ConnectivityResult.mobile);
+
+  // Ensure conversation_id is valid
+  if (message['conversation_id'] == null || message['conversation_id'].isEmpty) {
+    message['conversation_id'] = await _getConversationId();
+  }
+
+  if (isOffline) {
+    final db = await getLocalDb();
+    await db.insert(
+      'offline_messages',
+      {
+        'id': message['id'],
+        'data': jsonEncode(message),
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace, // Overwrite duplicates
+    );
+    setState(() {
+      final index = _messages.indexWhere((m) => m['id'] == message['id']);
+      if (index != -1) _messages[index]['status'] = 'queued';
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Message queued due to no internet')),
+    );
+    return;
+  }
+
+  try {
+    final conversationId = message['conversation_id'];
+    if (conversationId.isEmpty) {
+      throw Exception('Conversation ID cannot be empty');
     }
-    final iv = encrypt.IV.fromSecureRandom(16);
-    final encryptedText = _encrypter.encrypt(plaintext, iv: iv).base64;
 
-    String senderId = widget.currentUser['id'].toString();
-    String receiverId = widget.otherUser['id'].toString();
-    String conversationId = _getConversationId();
+    final batch = _firestore.batch();
+    final messageRef = _firestore
+        .collection('conversations')
+        .doc(conversationId)
+        .collection('messages')
+        .doc(message['id']);
+    final convoRef = _firestore.collection('conversations').doc(conversationId);
 
-    final encryptedMessage = {
-      'id': const Uuid().v4(),
-      'sender_id': senderId,
-      'receiver_id': receiverId,
+    batch.set(messageRef, {
+      'id': message['id'],
+      'sender_id': message['sender_id'],
+      'receiver_id': message['receiver_id'],
       'conversation_id': conversationId,
-      'message': encryptedText,
-      'iv': base64Encode(iv.bytes),
-      'created_at': DateTime.now().toIso8601String(),
-      'is_read': false,
-      'is_pinned': false,
-      'replied_to': _replyingToMessageId,
-      'type': 'text',
-      'reactions': {},
-      'status': 'sent',
-      'delivered_at': null,
-      'read_at': null,
-      'isPending': true,
-      'is_story_reply': false,
-      'story_id': null,
-    };
+      'message': message['message'],
+      'iv': message['iv'],
+      'timestamp': FieldValue.serverTimestamp(),
+      'is_read': message['is_read'] == true,
+      'is_pinned': message['is_pinned'] == true,
+      'replied_to': message['replied_to'],
+      'type': message['type'],
+      'reactions': message['reactions'] ?? {},
+      'delivered_at': message['delivered_at'],
+      'read_at': message['read_at'],
+      'scheduled_at': message['scheduled_at'],
+      'delete_after': message['delete_after'],
+      'is_story_reply': message['is_story_reply'] ?? false,
+      'story_id': message['story_id'],
+    });
 
-    final decryptedMessage = {
-      ...encryptedMessage,
-      'message': plaintext,
-    };
+    batch.set(
+      convoRef,
+      {
+        'participants': [
+          widget.currentUser['id'].toString(),
+          widget.otherUser['id'].toString(),
+        ],
+        'last_message': message['type'] == 'text' ? '[Encrypted]' : message['type'],
+        'timestamp': FieldValue.serverTimestamp(),
+      },
+      SetOptions(merge: true),
+    );
+
+    await batch.commit();
+    await AuthDatabase.instance.createMessage(message);
+    await AuthDatabase.instance.updateMessage({
+      'id': message['id'],
+      'conversation_id': message['conversation_id'],
+      'firestore_id': message['id'],
+      'delivered_at': DateTime.now().toIso8601String(),
+      'status': 'sent',
+    });
 
     setState(() {
-      _messages.add(decryptedMessage);
+      final index = _messages.indexWhere((m) => m['id'] == message['id']);
+      if (index != -1) {
+        _messages[index] = {
+          ..._messages[index],
+          'firestore_id': message['id'],
+          'isPending': false,
+          'status': 'sent',
+          'is_story_reply': message['is_story_reply'] ?? false,
+          'story_id': message['story_id'],
+        };
+      }
     });
-    _scrollToBottom();
 
-    try {
-      await _sendMessageToBoth(encryptedMessage);
-      _controller.clear();
-      setState(() => _replyingToMessageId = null);
-      _saveDraft('');
-    } catch (e) {
-      debugPrint('Error sending message: $e');
-    } finally {
-      _isSending = false;
-    }
+    _showNotification(message);
+  } catch (e) {
+    final db = await getLocalDb();
+    await db.insert(
+      'offline_messages',
+      {
+        'id': message['id'],
+        'data': jsonEncode(message),
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace, // Overwrite duplicates
+    );
+    setState(() {
+      final index = _messages.indexWhere((m) => m['id'] == message['id']);
+      if (index != -1) _messages[index]['status'] = 'queued';
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Message queued for sending: $e')),
+    );
   }
+}
 
   Future<void> _startRecording() async {
     if (await Permission.microphone.isGranted) {
@@ -405,6 +617,9 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
       await _recorder!.startRecorder(toFile: _audioPath);
       setState(() => _isRecording = true);
       _animationController?.forward();
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Microphone permission denied')));
     }
   }
 
@@ -418,6 +633,7 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
         'id': const Uuid().v4(),
         'sender_id': widget.currentUser['id'].toString(),
         'receiver_id': widget.otherUser['id'].toString(),
+        'conversation_id': await _getConversationId(),
         'message': audioUrl,
         'created_at': DateTime.now().toIso8601String(),
         'is_read': false,
@@ -425,9 +641,12 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
         'replied_to': _replyingToMessageId,
         'type': 'audio',
         'reactions': {},
-        'is_story_reply': false,
-        'story_id': null,
+        'status': 'pending',
+        'delivered_at': null,
+        'read_at': null,
+        'isPending': true,
       };
+      await _ensureConversationExists();
       _sendMessageToBoth(message);
       _scrollToBottom();
     }
@@ -455,6 +674,7 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
         'id': const Uuid().v4(),
         'sender_id': widget.currentUser['id'].toString(),
         'receiver_id': widget.otherUser['id'].toString(),
+        'conversation_id': await _getConversationId(),
         'message': fileUrl,
         'created_at': DateTime.now().toIso8601String(),
         'is_read': false,
@@ -462,9 +682,12 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
         'replied_to': _replyingToMessageId,
         'type': fileType,
         'reactions': {},
-        'is_story_reply': false,
-        'story_id': null,
+        'status': 'pending',
+        'delivered_at': null,
+        'read_at': null,
+        'isPending': true,
       };
+      await _ensureConversationExists();
       _sendMessageToBoth(message);
       _scrollToBottom();
     }
@@ -487,7 +710,8 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
       }
       return _supabase.storage.from('media-bucket').getPublicUrl(filePath);
     } catch (e) {
-      debugPrint('Error uploading file: $e');
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Error uploading file: $e')));
       return '';
     }
   }
@@ -525,6 +749,7 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
         'receiver_id': widget.otherUser['id'].toString(),
         'offer': offer.toMap(),
         'is_video': isVideo,
+        'status': 'ringing',
         'timestamp': FieldValue.serverTimestamp(),
       });
 
@@ -534,12 +759,16 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
           .snapshots()
           .listen((snapshot) async {
         final data = snapshot.data();
-        if (data != null && data['answer'] != null) {
-          RTCSessionDescription answer = RTCSessionDescription(
-            data['answer']['sdp'],
-            data['answer']['type'],
-          );
-          await _peerConnection!.setRemoteDescription(answer);
+        if (data != null) {
+          if (data['answer'] != null) {
+            RTCSessionDescription answer = RTCSessionDescription(
+              data['answer']['sdp'],
+              data['answer']['type'],
+            );
+            await _peerConnection!.setRemoteDescription(answer);
+          } else if (data['status'] == 'ended') {
+            _endCall();
+          }
         }
       });
 
@@ -576,7 +805,39 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
       _peerConnection!.onAddStream = (stream) {
         setState(() => _remoteStream = stream);
       };
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Permissions denied for call')));
     }
+  }
+
+  void _showCallDialog(String callId, Map<String, dynamic> data) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Incoming ${data['is_video'] ? 'Video' : 'Audio'} Call'),
+        content: Text('From ${widget.otherUser['username']}'),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _firestore
+                  .collection('calls')
+                  .doc(callId)
+                  .update({'status': 'ended'});
+            },
+            child: const Text('Reject'),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              await _acceptCall(callId, data['offer'], data['is_video']);
+            },
+            child: const Text('Accept'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _acceptCall(
@@ -613,6 +874,7 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
 
     await _firestore.collection('calls').doc(callId).update({
       'answer': answer.toMap(),
+      'status': 'connected',
     });
 
     _peerConnection!.onIceCandidate = (candidate) {
@@ -644,6 +906,17 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
     _peerConnection!.onAddStream = (stream) {
       setState(() => _remoteStream = stream);
     };
+
+    _callSubscription = _firestore
+        .collection('calls')
+        .doc(callId)
+        .snapshots()
+        .listen((snapshot) {
+      final data = snapshot.data();
+      if (data != null && data['status'] == 'ended') {
+        _endCall();
+      }
+    });
   }
 
   void _endCall() async {
@@ -651,7 +924,9 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
     await _localStream?.dispose();
     await _remoteStream?.dispose();
     if (_currentCallId != null) {
-      await _firestore.collection('calls').doc(_currentCallId).delete();
+      await _firestore.collection('calls').doc(_currentCallId).update({
+        'status': 'ended',
+      });
     }
     _callSubscription?.cancel();
     _candidatesSubscription?.cancel();
@@ -669,13 +944,14 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
     if (message['is_read'] == true) return;
     final updatedMessage = {
       'id': message['id'].toString(),
+      'conversation_id': message['conversation_id'].toString(),
       'is_read': true,
       'read_at': DateTime.now().toIso8601String(),
     };
     try {
       await AuthDatabase.instance.updateMessage(updatedMessage);
       if (message['firestore_id'] != null) {
-        final conversationId = _getConversationId();
+        final conversationId = await _getConversationId();
         await _firestore
             .collection('conversations')
             .doc(conversationId)
@@ -691,7 +967,8 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
         _messages[index]['read_at'] = DateTime.now().toIso8601String();
       });
     } catch (e) {
-      debugPrint('Error marking message as read: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error marking message as read: $e')));
     }
   }
 
@@ -704,80 +981,33 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
     }
   }
 
-  Future<void> _sendMessageToBoth(Map<String, dynamic> message) async {
+Future<void> _syncOfflineMessages() async {
+  final db = await getLocalDb();
+  final offlineMessages = await db.query('offline_messages');
+  if (offlineMessages.isEmpty) return;
+
+  // Wait for network stability (optional, adjust as needed)
+  await Future.delayed(const Duration(seconds: 1));
+
+  for (var msg in offlineMessages) {
+    final message = jsonDecode(msg['data'] as String) as Map<String, dynamic>;
     try {
-      final messageId = await AuthDatabase.instance.createMessage(message);
-      final conversationId = _getConversationId();
-      await _firestore
-          .collection('conversations')
-          .doc(conversationId)
-          .collection('messages')
-          .doc(message['id'])
-          .set({
-        'sender_id': message['sender_id'],
-        'receiver_id': message['receiver_id'],
-        'conversation_id': message['conversation_id'],
-        'message': message['message'],
-        'iv': message['iv'],
-        'timestamp': FieldValue.serverTimestamp(),
-        'is_read': message['is_read'],
-        'is_pinned': message['is_pinned'],
-        'replied_to': message['replied_to'],
-        'type': message['type'],
-        'reactions': message['reactions'] ?? {},
-        'delivered_at': FieldValue.serverTimestamp(),
-        'read_at': null,
-        'scheduled_at': message['scheduled_at'],
-        'delete_after': message['delete_after'],
-        'is_story_reply': message['is_story_reply'] ?? false,
-        'story_id': message['story_id'] ?? null,
-      });
-      await AuthDatabase.instance.updateMessage({
-        'id': message['id'],
-        'firestore_id': message['id'],
-        'delivered_at': DateTime.now().toIso8601String(),
-      });
-      await _firestore.collection('conversations').doc(conversationId).set({
-        'participants': [
-          widget.currentUser['id'].toString(),
-          widget.otherUser['id'].toString()
-        ],
-        'last_message': message['type'] == 'text'
-            ? _encrypter.decrypt64(message['message'],
-                iv: encrypt.IV.fromBase64(message['iv']))
-            : message['type'],
-        'timestamp': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
-
-      setState(() {
-        final index = _messages.indexWhere((m) => m['id'] == message['id']);
-        if (index != -1) {
-          _messages[index] = {
-            ..._messages[index],
-            'firestore_id': message['id'],
-            'isPending': false,
-            'is_story_reply': message['is_story_reply'] ?? false,
-            'story_id': message['story_id'],
-          };
-        }
-      });
-      _showNotification(message);
+      final connectivityResult = await Connectivity().checkConnectivity();
+      if (!connectivityResult.contains(ConnectivityResult.none)) {
+        await _sendMessageToBoth(message);
+        await db.delete('offline_messages',
+            where: 'id = ?', whereArgs: [msg['id']]);
+        setState(() {
+          final index = _messages.indexWhere((m) => m['id'] == message['id']);
+          if (index != -1) _messages[index]['status'] = 'sent';
+        });
+      }
     } catch (e) {
-      debugPrint('Error sending message: $e');
-      await _localDb!.insert('offline_messages',
-          {'id': message['id'], 'data': jsonEncode(message)});
+      debugPrint('Failed to sync offline message ${msg['id']}: $e');
+      // Leave message in queue for next sync attempt
     }
   }
-
-  Future<void> _syncOfflineMessages() async {
-    final offlineMessages = await _localDb!.query('offline_messages');
-    for (var msg in offlineMessages) {
-      final message = jsonDecode(msg['data'] as String) as Map<String, dynamic>;
-      _sendMessageToBoth(message);
-      await _localDb!
-          .delete('offline_messages', where: 'id = ?', whereArgs: [msg['id']]);
-    }
-  }
+}
 
   void _scrollToBottom() {
     if (_scrollController.hasClients) {
@@ -789,10 +1019,28 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
     }
   }
 
+  Future<void> _loadBackgroundSettings() async {
+    final db = await getLocalDb();
+    final conversationId = await _getConversationId();
+    final settings = await db.query('chat_settings',
+        where: 'conversation_id = ?', whereArgs: [conversationId]);
+    if (settings.isNotEmpty) {
+      final setting = settings.first;
+      setState(() {
+        if (setting['bg_color'] != null) {
+          _chatBgColor = Color(setting['bg_color'] as int);
+        }
+        _chatBgImage = setting['bg_image'] as String?;
+        _cinematicTheme = setting['cinematic_theme'] as String?;
+      });
+    }
+  }
+
   void _updateChatBackground(
       {Color? color, String? imageUrl, String? cinematicTheme}) async {
-    final conversationId = _getConversationId();
-    final currentSettings = await _localDb!.query('chat_settings',
+    final db = await getLocalDb();
+    final conversationId = await _getConversationId();
+    final currentSettings = await db.query('chat_settings',
         where: 'conversation_id = ?', whereArgs: [conversationId]);
 
     Map<String, dynamic> settings = currentSettings.isNotEmpty
@@ -812,7 +1060,7 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
       setState(() => _cinematicTheme = cinematicTheme);
     }
 
-    await _localDb!.insert(
+    await db.insert(
       'chat_settings',
       settings,
       conflictAlgorithm: ConflictAlgorithm.replace,
@@ -825,7 +1073,7 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
     try {
       await AuthDatabase.instance.deleteMessage(messageId);
       if (message['firestore_id'] != null) {
-        final conversationId = _getConversationId();
+        final conversationId = await _getConversationId();
         await _firestore
             .collection('conversations')
             .doc(conversationId)
@@ -835,7 +1083,8 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
       }
       setState(() => _messages.removeAt(index));
     } catch (e) {
-      debugPrint('Error deleting message: $e');
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Error deleting message: $e')));
     }
   }
 
@@ -844,13 +1093,14 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
     final isRead = message['is_read'] == true;
     final updatedMessage = {
       'id': message['id'].toString(),
+      'conversation_id': message['conversation_id'].toString(),
       'is_read': !isRead,
       'read_at': !isRead ? DateTime.now().toIso8601String() : null,
     };
     try {
       await AuthDatabase.instance.updateMessage(updatedMessage);
       if (message['firestore_id'] != null) {
-        final conversationId = _getConversationId();
+        final conversationId = await _getConversationId();
         await _firestore
             .collection('conversations')
             .doc(conversationId)
@@ -867,7 +1117,8 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
             !isRead ? DateTime.now().toIso8601String() : null;
       });
     } catch (e) {
-      debugPrint('Error updating read status: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error updating read status: $e')));
     }
   }
 
@@ -881,12 +1132,13 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
     final isPinned = message['is_pinned'] == true;
     final updatedMessage = {
       'id': message['id'].toString(),
+      'conversation_id': message['conversation_id'].toString(),
       'is_pinned': !isPinned
     };
     try {
       await AuthDatabase.instance.updateMessage(updatedMessage);
       if (message['firestore_id'] != null) {
-        final conversationId = _getConversationId();
+        final conversationId = await _getConversationId();
         await _firestore
             .collection('conversations')
             .doc(conversationId)
@@ -896,7 +1148,8 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
       }
       setState(() => _messages[index]['is_pinned'] = !isPinned);
     } catch (e) {
-      debugPrint('Error pinning message: $e');
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Error pinning message: $e')));
     }
   }
 
@@ -912,10 +1165,13 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
       reactions[reaction]!.remove(userId);
     }
     try {
-      await AuthDatabase.instance
-          .updateMessage({'id': messageId, 'reactions': reactions});
+     await AuthDatabase.instance.updateMessage({
+  'id': messageId,
+  'conversation_id': message['conversation_id'].toString(),  // Add this
+  'reactions': reactions
+});
       if (message['firestore_id'] != null) {
-        final conversationId = _getConversationId();
+        final conversationId = await _getConversationId();
         await _firestore
             .collection('conversations')
             .doc(conversationId)
@@ -925,7 +1181,8 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
       }
       setState(() => message['reactions'] = reactions);
     } catch (e) {
-      debugPrint('Error adding reaction: $e');
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Error adding reaction: $e')));
     }
   }
 
@@ -934,13 +1191,14 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
         SnackBar(content: Text('Forwarding message: ${message['message']}')));
   }
 
-  void _scheduleMessage(String text, DateTime time) {
+  void _scheduleMessage(String text, DateTime time) async {
     final iv = encrypt.IV.fromSecureRandom(16);
     final encryptedText = _encrypter.encrypt(text, iv: iv).base64;
     final message = {
       'id': const Uuid().v4(),
       'sender_id': widget.currentUser['id'].toString(),
       'receiver_id': widget.otherUser['id'].toString(),
+      'conversation_id': await _getConversationId(),
       'message': encryptedText,
       'iv': base64Encode(iv.bytes),
       'created_at': DateTime.now().toIso8601String(),
@@ -950,8 +1208,10 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
       'type': 'text',
       'reactions': {},
       'scheduled_at': time.toIso8601String(),
-      'is_story_reply': false,
-      'story_id': null,
+      'status': 'pending',
+      'delivered_at': null,
+      'read_at': null,
+      'isPending': true,
     };
     _sendMessageToBoth(message);
   }
@@ -963,7 +1223,7 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
       await AuthDatabase.instance.updateMessage(
           {'id': messageId, 'delete_after': deleteTime.toIso8601String()});
       if (message['firestore_id'] != null) {
-        final conversationId = _getConversationId();
+        final conversationId = await _getConversationId();
         await _firestore
             .collection('conversations')
             .doc(conversationId)
@@ -973,7 +1233,8 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
       }
       setState(() => message['delete_after'] = deleteTime.toIso8601String());
     } catch (e) {
-      debugPrint('Error setting auto-delete: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error setting auto-delete: $e')));
     }
   }
 
@@ -1011,18 +1272,7 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
             importance: Importance.max, priority: Priority.high);
     const NotificationDetails notificationDetails =
         NotificationDetails(android: androidDetails);
-    String notificationText;
-    try {
-      if (message['type'] == 'text' && message['iv'] != null) {
-        final iv = encrypt.IV.fromBase64(message['iv']);
-        notificationText = _encrypter.decrypt64(message['message'], iv: iv);
-      } else {
-        notificationText = message['type'];
-      }
-    } catch (e) {
-      debugPrint('Error decrypting notification: $e');
-      notificationText = '[Decryption Failed]';
-    }
+    String notificationText = 'New ${message['type']} message';
     String title = 'New Message from ${widget.otherUser['username']}';
     await _notificationsPlugin.show(
       0,
@@ -1033,7 +1283,7 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
   }
 
   void _updateTypingStatus(bool isTyping) async {
-    final conversationId = _getConversationId();
+    final conversationId = await _getConversationId();
     final userId = widget.currentUser['id'].toString();
     if (isTyping) {
       await _firestore.collection('conversations').doc(conversationId).set({
@@ -1046,96 +1296,12 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
     }
   }
 
-  void _listenToFirestoreMessages() {
-    final conversationId = _getConversationId();
-    _messagesSubscription = _firestore
-        .collection('conversations')
-        .doc(conversationId)
-        .collection('messages')
-        .orderBy('timestamp', descending: false)
-        .snapshots()
-        .listen((snapshot) async {
-      for (var doc in snapshot.docChanges
-          .where((change) => change.type == DocumentChangeType.added)) {
-        final data = doc.doc.data()!;
-        final encryptedMessage = {
-          'id': doc.doc.id,
-          'sender_id': data['sender_id'].toString(),
-          'receiver_id': data['receiver_id']?.toString(),
-          'conversation_id': data['conversation_id']?.toString(),
-          'message': data['message'].toString(),
-          'iv': data['iv']?.toString(),
-          'created_at':
-              (data['timestamp'] as Timestamp?)?.toDate().toIso8601String() ??
-                  DateTime.now().toIso8601String(),
-          'is_read': data['is_read'] == true,
-          'is_pinned': data['is_pinned'] == true,
-          'replied_to': data['replied_to']?.toString(),
-          'type': data['type']?.toString() ?? 'text',
-          'firestore_id': doc.doc.id,
-          'reactions': data['reactions'] is String
-              ? (data['reactions'].isEmpty ? {} : jsonDecode(data['reactions']))
-              : (data['reactions'] ?? {}),
-          'delivered_at':
-              (data['delivered_at'] as Timestamp?)?.toDate().toIso8601String(),
-          'read_at':
-              (data['read_at'] as Timestamp?)?.toDate().toIso8601String(),
-          'scheduled_at': data['scheduled_at']?.toString(),
-          'delete_after': data['delete_after']?.toString(),
-          'isPending': false,
-          'is_story_reply': data['is_story_reply'] ?? false,
-          'story_id': data['story_id'],
-        };
-
-        await AuthDatabase.instance.createMessage(encryptedMessage);
-
-        String messageText = encryptedMessage['message'];
-        if (encryptedMessage['type'] == 'text' &&
-            encryptedMessage['iv'] != null) {
-          try {
-            final iv = encrypt.IV.fromBase64(encryptedMessage['iv']);
-            messageText = _encrypter.decrypt64(messageText, iv: iv);
-          } catch (e) {
-            debugPrint('Error decrypting Firestore message ${doc.doc.id}: $e');
-            messageText = '[Decryption Failed]';
-          }
-        }
-
-        final decryptedMessage = {
-          ...encryptedMessage,
-          'message': messageText,
-        };
-
-        final existingIndex =
-            _messages.indexWhere((m) => m['id'] == decryptedMessage['id']);
-        if (existingIndex != -1) {
-          setState(() {
-            _messages[existingIndex] = decryptedMessage;
-          });
-        } else {
-          setState(() {
-            _messages.add(decryptedMessage);
-            if (decryptedMessage['sender_id'] ==
-                    widget.otherUser['id'].toString() &&
-                decryptedMessage['is_read'] == false) {
-              final index = _messages.indexOf(decryptedMessage);
-              if (index != -1) {
-                _markMessageAsRead(index);
-              }
-            }
-          });
-        }
-      }
-      _scrollToBottom();
-    }, onError: (e) => debugPrint('Error listening to messages: $e'));
-  }
-
   @override
   void dispose() {
     _typingSubscription?.cancel();
     _messagesSubscription?.cancel();
     _recorder?.closeRecorder();
-    _recorder = null;
+    _connectivitySubscription?.cancel();
     _callsSubscription?.cancel();
     _callSubscription?.cancel();
     _candidatesSubscription?.cancel();
@@ -1180,6 +1346,30 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
       }
     }
     return BoxDecoration(color: _chatBgColor);
+  }
+
+  Widget _buildProfileAvatar() {
+    final profilePicture = widget.otherUser['profile_picture']?.toString();
+    final username = widget.otherUser['username']?.toString() ?? '';
+    final firstLetter = username.isNotEmpty ? username[0].toUpperCase() : 'U';
+
+    if (profilePicture != null && profilePicture.isNotEmpty) {
+      return CachedNetworkImage(
+        imageUrl: profilePicture,
+        placeholder: (context, url) => const CircularProgressIndicator(),
+        errorWidget: (context, url, error) => CircleAvatar(
+          backgroundColor: Colors.deepPurple,
+          child: Text(firstLetter, style: const TextStyle(color: Colors.white)),
+        ),
+        imageBuilder: (context, imageProvider) =>
+            CircleAvatar(backgroundImage: imageProvider),
+      );
+    } else {
+      return CircleAvatar(
+        backgroundColor: Colors.deepPurple,
+        child: Text(firstLetter, style: const TextStyle(color: Colors.white)),
+      );
+    }
   }
 
   void _showMessageOptions(BuildContext context, Map<String, dynamic> message) {
@@ -1271,9 +1461,19 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
   String getHeaderText(DateTime date) {
     final now = DateTime.now();
     if (isSameDay(date, now)) return "Today";
-    if (isSameDay(date, now.subtract(const Duration(days: 1))))
+    if (isSameDay(date, now.subtract(const Duration(days: 1)))) {
       return "Yesterday";
-    return DateFormat('MMM d, yyyy').format(date);
+    }
+    return DateFormat.yMMMd(Localizations.localeOf(context).languageCode)
+        .format(date);
+  }
+
+  Color _getTextColor() {
+    if (_chatBgImage != null || _cinematicTheme != null) {
+      return Colors.white;
+    }
+    final luminance = _chatBgColor.computeLuminance();
+    return luminance > 0.5 ? Colors.black : Colors.white;
   }
 
   @override
@@ -1294,8 +1494,6 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
                         iv: encrypt.IV.fromBase64(repliedMsg['iv']))
                     : repliedMsg['message'].toString();
           } catch (e) {
-            debugPrint(
-                'Error decrypting replied message ${m['replied_to']}: $e');
             repliedToText = '[Decryption Failed]';
           }
         }
@@ -1328,8 +1526,8 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
               padding: const EdgeInsets.symmetric(vertical: 8),
               alignment: Alignment.center,
               child: Text(getHeaderText(currentDate),
-                  style: const TextStyle(
-                      color: Colors.white70, fontWeight: FontWeight.bold))));
+                  style: TextStyle(
+                      color: _getTextColor(), fontWeight: FontWeight.bold))));
         }
         listWidgets.add(MessageWidget(
           message: item['data'],
@@ -1368,32 +1566,33 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
                   : item['data']['type'] == 'share'
                       ? "You shared their story"
                       : "Unknown interaction",
-              style: const TextStyle(color: Colors.white70)),
+              style: TextStyle(color: _getTextColor())),
           subtitle: Text(
-              DateFormat('MMM d, yyyy h:mm a').format(item['timestamp']),
-              style: const TextStyle(color: Colors.white54)),
+              DateFormat.yMMMd(Localizations.localeOf(context).languageCode)
+                  .add_jm()
+                  .format(item['timestamp']),
+              style: TextStyle(color: _getTextColor().withOpacity(0.7))),
         ));
       }
     }
 
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       appBar: AppBar(
         leading: Row(
           children: [
             IconButton(
                 icon: const Icon(Icons.arrow_back, color: Colors.white),
                 onPressed: () => Navigator.pop(context)),
-            CachedNetworkImage(
-              imageUrl: widget.otherUser['profile_picture']?.toString() ??
-                  'https://via.placeholder.com/200',
-              placeholder: (context, url) => const CircularProgressIndicator(),
-              errorWidget: (context, url, error) => const Icon(Icons.error),
-              imageBuilder: (context, imageProvider) =>
-                  CircleAvatar(backgroundImage: imageProvider),
+            const SizedBox(width: 8),
+            SizedBox(
+              width: 40,
+              height: 40,
+              child: _buildProfileAvatar(),
             ),
           ],
         ),
-        leadingWidth: 80,
+        leadingWidth: 100,
         title: Text(widget.otherUser['username']?.toString() ?? 'User'),
         backgroundColor: Colors.deepPurple,
         actions: [
@@ -1484,9 +1683,9 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('Pinned Messages',
+                        Text('Pinned Messages',
                             style: TextStyle(
-                                color: Colors.white,
+                                color: _getTextColor(),
                                 fontWeight: FontWeight.bold)),
                         ..._messages
                             .where((m) => m['is_pinned'] == true)
@@ -1498,13 +1697,11 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
                                     iv: encrypt.IV.fromBase64(m['iv']))
                                 : m['type'];
                           } catch (e) {
-                            debugPrint(
-                                'Error decrypting pinned message ${m['id']}: $e');
                             pinnedText = '[Decryption Failed]';
                           }
                           return ListTile(
                             title: Text(pinnedText,
-                                style: const TextStyle(color: Colors.white)),
+                                style: TextStyle(color: _getTextColor())),
                             onTap: () {
                               final index = _messages.indexOf(m);
                               _scrollController.animateTo(index * 100.0,
@@ -1517,10 +1714,14 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
                     ),
                   ),
                 Expanded(
-                    child: ListView(
-                        controller: _scrollController,
-                        padding: const EdgeInsets.all(16),
-                        children: listWidgets)),
+                  child: ListView.builder(
+                    controller: _scrollController,
+                    padding: const EdgeInsets.all(16),
+                    itemCount: listWidgets.length,
+                    itemBuilder: (context, index) => listWidgets[index],
+                    cacheExtent: 1000.0,
+                  ),
+                ),
                 if (_isOtherTyping)
                   Padding(
                     padding: const EdgeInsets.all(8.0),
@@ -1529,120 +1730,129 @@ class _IndividualChatScreensState extends State<IndividualChatScreen>
                       const CircularProgressIndicator(),
                       const SizedBox(width: 8),
                       Text('${widget.otherUser['username']} is typing...',
-                          style: const TextStyle(color: Colors.white))
+                          style: TextStyle(color: _getTextColor()))
                     ]),
                   ),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                  color: Colors.red[900],
-                  child: Column(
-                    children: [
-                      Row(
-                        children: [
-                          IconButton(
-                            icon: const Icon(Icons.emoji_emotions,
-                                color: Colors.white),
-                            onPressed: () {
-                              setState(() {
-                                _showEmojiPicker = !_showEmojiPicker;
-                                if (_showEmojiPicker) {
-                                  FocusScope.of(context).unfocus();
-                                } else {
-                                  FocusScope.of(context)
-                                      .requestFocus(FocusNode());
-                                }
-                              });
-                            },
-                          ),
-                          IconButton(
-                              icon: const Icon(Icons.attach_file,
+                Padding(
+                  padding: EdgeInsets.only(
+                      bottom: MediaQuery.of(context).viewInsets.bottom),
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                    color: Colors.red[900],
+                    child: Column(
+                      children: [
+                        Row(
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.emoji_emotions,
                                   color: Colors.white),
-                              onPressed: _uploadAttachment),
-                          Expanded(
-                            child: TextField(
-                              controller: _controller,
-                              style: const TextStyle(color: Colors.white),
-                              decoration: const InputDecoration(
-                                hintText: "Type a message...",
-                                hintStyle: TextStyle(color: Colors.white54),
-                                border: OutlineInputBorder(
-                                    borderRadius:
-                                        BorderRadius.all(Radius.circular(20)),
-                                    borderSide: BorderSide.none),
-                                filled: true,
-                                fillColor: Colors.black26,
-                              ),
-                              textInputAction: TextInputAction.send,
-                              onSubmitted: (_) => _sendMessage(),
-                              onChanged: (text) {
-                                _saveDraft(text);
-                                if (!_isTyping) {
-                                  setState(() => _isTyping = true);
-                                  _updateTypingStatus(true);
-                                }
-                                _typingTimer?.cancel();
-                                _typingTimer =
-                                    Timer(const Duration(seconds: 2), () {
-                                  setState(() => _isTyping = false);
-                                  _updateTypingStatus(false);
+                              onPressed: () {
+                                setState(() {
+                                  _showEmojiPicker = !_showEmojiPicker;
+                                  if (_showEmojiPicker) {
+                                    FocusScope.of(context).unfocus();
+                                  } else {
+                                    FocusScope.of(context)
+                                        .requestFocus(FocusNode());
+                                  }
                                 });
                               },
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          _controller.text.isEmpty
-                              ? AnimatedBuilder(
-                                  animation: _pulseAnimation!,
-                                  builder: (context, child) {
-                                    return Transform.scale(
-                                      scale: _isRecording
-                                          ? _pulseAnimation!.value
-                                          : 1.0,
-                                      child: Container(
-                                        decoration: BoxDecoration(
-                                            shape: BoxShape.circle,
-                                            color: _isRecording
-                                                ? Colors.red.withOpacity(0.3)
-                                                : Colors.transparent),
-                                        child: IconButton(
-                                            icon: Icon(
-                                                _isRecording
-                                                    ? Icons.stop
-                                                    : Icons.mic,
-                                                color: Colors.white),
-                                            onPressed: _isRecording
-                                                ? _stopRecording
-                                                : _startRecording),
-                                      ),
-                                    );
-                                  },
-                                )
-                              : IconButton(
-                                  icon: const Icon(Icons.send,
-                                      color: Colors.white),
-                                  onPressed: _isSending ? null : _sendMessage),
-                        ],
-                      ),
-                      if (_showEmojiPicker)
-                        SizedBox(
-                          height: 250,
-                          child: EmojiPicker(
-                            onEmojiSelected: (category, emoji) {
-                              _controller.text += emoji.emoji;
-                              _saveDraft(_controller.text);
-                            },
-                            config: Config(
-                              emojiViewConfig: EmojiViewConfig(
-                                backgroundColor: Colors.white,
-                              ),
-                              categoryViewConfig: CategoryViewConfig(
-                                iconColorSelected: Colors.deepPurple,
+                            IconButton(
+                                icon: const Icon(Icons.attach_file,
+                                    color: Colors.white),
+                                onPressed: _uploadAttachment),
+                            Expanded(
+                              child: TextField(
+                                controller: _controller,
+                                style: const TextStyle(color: Colors.white),
+                                decoration: InputDecoration(
+                                  hintText: "Type a message...",
+                                  hintStyle:
+                                      const TextStyle(color: Colors.white54),
+                                  border: const OutlineInputBorder(
+                                      borderRadius:
+                                          BorderRadius.all(Radius.circular(20)),
+                                      borderSide: BorderSide.none),
+                                  filled: true,
+                                  fillColor: Colors.black26,
+                                  suffixIcon: _isSending
+                                      ? const CircularProgressIndicator()
+                                      : null,
+                                ),
+                                textInputAction: TextInputAction.send,
+                                onSubmitted: (_) => _sendMessage(),
+                                onChanged: (text) {
+                                  _saveDraft(text);
+                                  if (!_isTyping) {
+                                    setState(() => _isTyping = true);
+                                    _updateTypingStatus(true);
+                                  }
+                                  _typingTimer?.cancel();
+                                  _typingTimer =
+                                      Timer(const Duration(seconds: 2), () {
+                                    setState(() => _isTyping = false);
+                                    _updateTypingStatus(false);
+                                  });
+                                },
                               ),
                             ),
-                          ),
-                        )
-                    ],
+                            const SizedBox(width: 8),
+                            _controller.text.isEmpty
+                                ? AnimatedBuilder(
+                                    animation: _pulseAnimation!,
+                                    builder: (context, child) {
+                                      return Transform.scale(
+                                        scale: _isRecording
+                                            ? _pulseAnimation!.value
+                                            : 1.0,
+                                        child: Container(
+                                          decoration: BoxDecoration(
+                                              shape: BoxShape.circle,
+                                              color: _isRecording
+                                                  ? Colors.red.withOpacity(0.3)
+                                                  : Colors.transparent),
+                                          child: IconButton(
+                                              icon: Icon(
+                                                  _isRecording
+                                                      ? Icons.stop
+                                                      : Icons.mic,
+                                                  color: Colors.white),
+                                              onPressed: _isRecording
+                                                  ? _stopRecording
+                                                  : _startRecording),
+                                        ),
+                                      );
+                                    },
+                                  )
+                                : IconButton(
+                                    icon: const Icon(Icons.send,
+                                        color: Colors.white),
+                                    onPressed:
+                                        _isSending ? null : _sendMessage),
+                          ],
+                        ),
+                        if (_showEmojiPicker)
+                          SizedBox(
+                            height: 250,
+                            child: EmojiPicker(
+                              onEmojiSelected: (category, emoji) {
+                                _controller.text += emoji.emoji;
+                                _saveDraft(_controller.text);
+                              },
+                              config: const Config(
+                                emojiViewConfig: EmojiViewConfig(
+                                  backgroundColor: Colors.white,
+                                ),
+                                categoryViewConfig: CategoryViewConfig(
+                                  iconColorSelected: Colors.deepPurple,
+                                ),
+                              ),
+                            ),
+                          )
+                      ],
+                    ),
                   ),
                 ),
               ],
@@ -1661,20 +1871,22 @@ class WebRTCCallWidget extends StatefulWidget {
   final VoidCallback onEnd;
 
   const WebRTCCallWidget({
-    Key? key,
+    super.key,
     required this.localStream,
     required this.remoteStream,
     required this.isVideo,
     required this.onEnd,
-  }) : super(key: key);
+  });
 
   @override
   _WebRTCCallWidgetState createState() => _WebRTCCallWidgetState();
 }
 
 class _WebRTCCallWidgetState extends State<WebRTCCallWidget> {
-  RTCVideoRenderer _localRenderer = RTCVideoRenderer();
-  RTCVideoRenderer _remoteRenderer = RTCVideoRenderer();
+  final RTCVideoRenderer _localRenderer = RTCVideoRenderer();
+  final RTCVideoRenderer _remoteRenderer = RTCVideoRenderer();
+  bool _isMuted = false;
+  bool _isCameraOn = true;
 
   @override
   void initState() {
@@ -1702,6 +1914,24 @@ class _WebRTCCallWidgetState extends State<WebRTCCallWidget> {
     if (widget.remoteStream != oldWidget.remoteStream) {
       _remoteRenderer.srcObject = widget.remoteStream;
     }
+  }
+
+  void _toggleMute() {
+    setState(() {
+      _isMuted = !_isMuted;
+      widget.localStream?.getAudioTracks().forEach((track) {
+        track.enabled = !_isMuted;
+      });
+    });
+  }
+
+  void _toggleCamera() {
+    setState(() {
+      _isCameraOn = !_isCameraOn;
+      widget.localStream?.getVideoTracks().forEach((track) {
+        track.enabled = _isCameraOn;
+      });
+    });
   }
 
   @override
@@ -1739,11 +1969,29 @@ class _WebRTCCallWidgetState extends State<WebRTCCallWidget> {
             alignment: Alignment.bottomCenter,
             child: Padding(
               padding: const EdgeInsets.all(16),
-              child: ElevatedButton(
-                onPressed: widget.onEnd,
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-                child: const Text('End Call',
-                    style: TextStyle(color: Colors.white)),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  IconButton(
+                    icon: Icon(_isMuted ? Icons.mic_off : Icons.mic,
+                        color: Colors.white),
+                    onPressed: _toggleMute,
+                  ),
+                  if (widget.isVideo)
+                    IconButton(
+                      icon: Icon(
+                          _isCameraOn ? Icons.videocam : Icons.videocam_off,
+                          color: Colors.white),
+                      onPressed: _toggleCamera,
+                    ),
+                  ElevatedButton(
+                    onPressed: widget.onEnd,
+                    style:
+                        ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                    child: const Text('End Call',
+                        style: TextStyle(color: Colors.white)),
+                  ),
+                ],
               ),
             ),
           ),
