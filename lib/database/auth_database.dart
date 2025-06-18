@@ -25,10 +25,7 @@ class AuthDatabase {
       sembast.stringMapStoreFactory.store('conversations');
   final _followersStore = sembast.stringMapStoreFactory.store('followers');
 
-  // Map to hold message subscriptions for each conversation
-  Map<String, StreamSubscription> _messageSubscriptions = {};
-
-  // Subscriptions for other collections
+  final Map<String, StreamSubscription> _messageSubscriptions = {};
   StreamSubscription? _userSubscription;
   StreamSubscription? _profilesSubscription;
   StreamSubscription? _conversationsSubscription;
@@ -58,35 +55,41 @@ class AuthDatabase {
     }
   }
 
-  Future<sqflite.Database> _initializeSqflite() async {
-    try {
-      final dbPath = await sqflite.getDatabasesPath();
-      final path = join(dbPath, 'auth.db');
-      final db = await sqflite.openDatabase(
-        path,
-        version: 1,
-        onConfigure: (db) async => await db.execute('PRAGMA foreign_keys = ON'),
-        onCreate: _createSQLiteDB,
-      );
-      debugPrint('SQLite database opened at $path');
-      final tables = [
-        'users',
-        'profiles',
-        'messages',
-        'conversations',
-        'followers'
-      ];
-      for (var table in tables) {
-        if (!await _tableExists(db, table)) {
-          debugPrint('Warning: Table $table does not exist');
+Future<sqflite.Database> _initializeSqflite() async {
+  try {
+    final dbPath = await sqflite.getDatabasesPath();
+    final path = join(dbPath, 'auth.db');
+    final db = await sqflite.openDatabase(
+      path,
+      version: 2,
+      onConfigure: (db) async => await db.execute('PRAGMA foreign_keys = ON'),
+      onCreate: _createSQLiteDB,
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await db.execute('ALTER TABLE messages ADD COLUMN status TEXT DEFAULT "sent"');
         }
-      }
-      return db;
-    } catch (e) {
-      debugPrint('Failed to initialize SQLite database: $e');
-      throw Exception('Failed to initialize SQLite database: $e');
+      },
+    );
+    // Check if "status" column exists in "messages" table, and add it if not
+    final result = await db.rawQuery('PRAGMA table_info(messages)');
+    final columns = result.map((row) => row['name'] as String).toList();
+    if (!columns.contains('status')) {
+      await db.execute('ALTER TABLE messages ADD COLUMN status TEXT DEFAULT "sent"');
+      debugPrint('Added missing "status" column to messages table');
     }
+    debugPrint('SQLite database opened at $path');
+    final tables = ['users', 'profiles', 'messages', 'conversations', 'followers'];
+    for (var table in tables) {
+      if (!await _tableExists(db, table)) {
+        debugPrint('Warning: Table $table does not exist');
+      }
+    }
+    return db;
+  } catch (e) {
+    debugPrint('Failed to initialize SQLite database: $e');
+    throw Exception('Failed to initialize SQLite database: $e');
   }
+}
 
   Future<void> _createSQLiteDB(sqflite.Database db, int version) async {
     try {
@@ -126,14 +129,13 @@ class AuthDatabase {
         )
       ''');
 
-      await db
-          .execute('CREATE INDEX idx_profiles_user_id ON profiles(user_id)');
+      await db.execute('CREATE INDEX idx_profiles_user_id ON profiles(user_id)');
 
       await db.execute('''
 CREATE TABLE messages (
   id TEXT PRIMARY KEY,
   sender_id TEXT NOT NULL,
-  receiver_id TEXT,  -- No foreign key constraint
+  receiver_id TEXT,
   conversation_id TEXT NOT NULL,
   message TEXT NOT NULL,
   iv TEXT,
@@ -144,6 +146,7 @@ CREATE TABLE messages (
   type TEXT DEFAULT 'text',
   firestore_id TEXT,
   reactions TEXT DEFAULT '{}',
+  status TEXT DEFAULT 'sent',
   delivered_at TEXT,
   read_at TEXT,
   scheduled_at TEXT,
@@ -217,35 +220,46 @@ CREATE TABLE messages (
     }
   }
 
-  Map<String, dynamic> _normalizeMessageData(Map<String, dynamic> message) {
+  Future<bool> conversationExists(String conversationId) async {
+    try {
+      if (kIsWeb) {
+        final record = await _conversationStore.record(conversationId).get(await database);
+        return record != null;
+      } else {
+        final db = await database as sqflite.Database;
+        final result = await db.query(
+          'conversations',
+          where: 'id = ?',
+          whereArgs: [conversationId],
+        );
+        return result.isNotEmpty;
+      }
+    } catch (e) {
+      debugPrint('Error checking conversation existence: $e');
+      return false;
+    }
+  }
+
+  Map<String, dynamic> _normalizeMessageData(Map<String, dynamic> data) {
     return {
-      'id': message['id']?.toString() ?? '',
-      'sender_id': message['sender_id']?.toString() ?? '',
-      'receiver_id': message['receiver_id']?.toString() ?? '',
-      'message': message['message']?.toString() ?? '',
-      'iv': message['iv']?.toString(),
-      'created_at':
-          message['created_at']?.toString() ?? DateTime.now().toIso8601String(),
-      'is_read': message['is_read'] is bool
-          ? (message['is_read'] ? 1 : 0)
-          : (message['is_read']?.toInt() ?? 0),
-      'is_pinned': message['is_pinned'] is bool
-          ? (message['is_pinned'] ? 1 : 0)
-          : (message['is_pinned']?.toInt() ?? 0),
-      'replied_to': message['replied_to']?.toString(),
-      'type': message['type']?.toString() ?? 'text',
-      'firestore_id': message['firestore_id']?.toString(),
-      'reactions': message['reactions'] is Map
-          ? message['reactions']
-          : (message['reactions'] is String
-              ? (message['reactions'].isEmpty
-                  ? {}
-                  : jsonDecode(message['reactions']))
-              : {}),
-      'delivered_at': message['delivered_at']?.toString(),
-      'read_at': message['read_at']?.toString(),
-      'scheduled_at': message['scheduled_at']?.toString(),
-      'delete_after': message['delete_after']?.toString(),
+      'id': data['id']?.toString() ?? '',
+      'firestore_id': data['firestore_id']?.toString() ?? data['id']?.toString() ?? '',
+      'conversation_id': data['conversation_id']?.toString() ?? '',
+      'sender_id': data['sender_id']?.toString() ?? '',
+      'receiver_id': data['receiver_id']?.toString() ?? '',
+      'message': data['message']?.toString() ?? '',
+      'iv': data['iv']?.toString(),
+      'type': data['type']?.toString() ?? 'text',
+      'is_read': data['is_read'] == true ? 1 : 0,
+      'is_pinned': data['is_pinned'] == true ? 1 : 0,
+      'replied_to': data['replied_to']?.toString(),
+      'reactions': data['reactions'] ?? {},
+      'status': data['status']?.toString() ?? 'sent',
+      'created_at': data['timestamp']?.toDate()?.toIso8601String() ?? data['created_at']?.toString() ?? DateTime.now().toIso8601String(),
+      'delivered_at': data['delivered_at']?.toString(),
+      'read_at': data['read_at']?.toString(),
+      'scheduled_at': data['scheduled_at']?.toString(),
+      'delete_after': data['delete_after']?.toString(),
     };
   }
 
@@ -266,7 +280,6 @@ CREATE TABLE messages (
     };
   }
 
-  // Start real-time syncing for all collections
   Future<void> startSyncingForUser(String userId) async {
     await initialize();
     await _startListeningToUser(userId);
@@ -275,7 +288,6 @@ CREATE TABLE messages (
     await _startListeningToFollowers(userId);
   }
 
-  // Stop real-time syncing
   Future<void> stopSyncing() async {
     _userSubscription?.cancel();
     _profilesSubscription?.cancel();
@@ -388,6 +400,7 @@ CREATE TABLE messages (
     if (userId.isEmpty) throw Exception('User ID cannot be empty');
     final userData = _normalizeUserData(user);
     if (kIsWeb) {
+      debugPrint('Storing user $userId: $userData');
       await _userStore.record(userId).put(await database, userData);
     } else {
       final db = await database as sqflite.Database;
@@ -435,8 +448,9 @@ CREATE TABLE messages (
   Future<void> _insertOrUpdateConversation(
       Map<String, dynamic> conversation) async {
     final conversationId = conversation['id']?.toString() ?? '';
-    if (conversationId.isEmpty)
+    if (conversationId.isEmpty) {
       throw Exception('Conversation ID cannot be empty');
+    }
     if (kIsWeb) {
       await _conversationStore
           .record(conversationId)
@@ -763,7 +777,6 @@ CREATE TABLE messages (
 
   Future<Map<String, dynamic>?> getActiveProfileByUserId(String userId) async {
     try {
-      // Step 1: Check local database first
       Map<String, dynamic>? localProfile;
 
       if (kIsWeb) {
@@ -795,12 +808,10 @@ CREATE TABLE messages (
         }
       }
 
-      // Step 2: If found locally, return it
       if (localProfile != null) {
         return localProfile;
       }
 
-      // Step 3: If not found locally, query Firestore
       final snapshot = await _firestore
           .collection('profiles')
           .where('user_id', isEqualTo: userId)
@@ -812,12 +823,10 @@ CREATE TABLE messages (
       if (snapshot.docs.isNotEmpty) {
         final profileData = snapshot.docs.first.data();
         profileData['id'] = snapshot.docs.first.id;
-        // Insert into local database to keep it in sync
         await _insertOrUpdateProfile(profileData);
         return profileData;
       }
 
-      // Step 4: If not found in Firestore either, return null
       return null;
     } catch (e) {
       debugPrint('Failed to fetch active profile: $e');
@@ -857,75 +866,76 @@ CREATE TABLE messages (
     }
   }
 
-Future<String> createMessage(Map<String, dynamic> message) async {
-  final messageId = message['id']?.toString() ?? _uuid.v4();
-  if (await _messageExists(messageId)) return messageId;
+  Future<String> createMessage(Map<String, dynamic> message) async {
+    final messageId = message['id']?.toString() ?? _uuid.v4();
+    if (await _messageExists(messageId)) return messageId;
 
-  final messageData = _normalizeMessageData({
-    ...message,
-    'id': messageId,
-    'created_at': DateTime.now().toIso8601String(),
-  });
-
-  if (messageData['sender_id'].isEmpty) {
-    throw Exception('sender_id cannot be empty');
-  }
-
-  try {
-    final conversationId = messageData['conversation_id'];
-    if (conversationId == null || conversationId.isEmpty) {
-      throw Exception('conversation_id is required');
-    }
-    await _firestore
-        .collection('conversations')
-        .doc(conversationId)
-        .collection('messages')
-        .doc(messageId)
-        .set({
+    final messageData = _normalizeMessageData({
+      ...message,
       'id': messageId,
-      'sender_id': messageData['sender_id'],
-      'receiver_id': messageData['receiver_id'],
-      'conversation_id': conversationId,
-      'message': messageData['message'],
-      'iv': messageData['iv'],
-      'timestamp': firestore.FieldValue.serverTimestamp(),
-      'is_read': messageData['is_read'] == 1,
-      'is_pinned': messageData['is_pinned'] == 1,
-      'replied_to': messageData['replied_to'],
-      'type': messageData['type'],
-      'reactions': messageData['reactions'] ?? {},
-      'delivered_at': messageData['delivered_at'],
-      'read_at': messageData['read_at'],
-      'scheduled_at': messageData['scheduled_at'],
-      'delete_after': messageData['delete_after'],
-    }, firestore.SetOptions(merge: true));
+      'created_at': DateTime.now().toIso8601String(),
+    });
 
-    await _insertOrUpdateMessage(messageData);
-    return messageId;
-  } catch (e) {
-    debugPrint('Failed to create message: $e');
-    throw Exception('Failed to create message: $e');
-  }
-}
-
-Future<void> syncMessagesForConversation(String conversationId) async {
-  try {
-    final snapshot = await _firestore
-        .collection('conversations')
-        .doc(conversationId)
-        .collection('messages')
-        .orderBy('timestamp')
-        .get();
-    for (var doc in snapshot.docs) {
-      final messageData = doc.data();
-      messageData['id'] = doc.id;
-      await _insertOrUpdateMessage(messageData);
+    if (messageData['sender_id'].isEmpty) {
+      throw Exception('sender_id cannot be empty');
     }
-  } catch (e) {
-    debugPrint('Failed to sync messages for conversation $conversationId: $e');
-    throw Exception('Failed to sync messages: $e');
+    if (messageData['conversation_id'].isEmpty) {
+      throw Exception('conversation_id cannot be empty');
+    }
+
+    try {
+      final conversationId = messageData['conversation_id'];
+      await _firestore
+          .collection('conversations')
+          .doc(conversationId)
+          .collection('messages')
+          .doc(messageId)
+          .set({
+        'id': messageId,
+        'sender_id': messageData['sender_id'],
+        'receiver_id': messageData['receiver_id'],
+        'conversation_id': conversationId,
+        'message': messageData['message'],
+        'iv': messageData['iv'],
+        'timestamp': firestore.FieldValue.serverTimestamp(),
+        'is_read': messageData['is_read'] == 1,
+        'is_pinned': messageData['is_pinned'] == 1,
+        'replied_to': messageData['replied_to'],
+        'type': messageData['type'],
+        'reactions': messageData['reactions'] ?? {},
+        'delivered_at': messageData['delivered_at'],
+        'read_at': messageData['read_at'],
+        'scheduled_at': messageData['scheduled_at'],
+        'delete_after': messageData['delete_after'],
+      }, firestore.SetOptions(merge: true));
+
+      await _insertOrUpdateMessage(messageData);
+      return messageId;
+    } catch (e) {
+      debugPrint('Failed to create message: $e');
+      throw Exception('Failed to create message: $e');
+    }
   }
-}
+
+  Future<void> syncMessagesForConversation(String conversationId) async {
+    try {
+      final snapshot = await _firestore
+          .collection('conversations')
+          .doc(conversationId)
+          .collection('messages')
+          .orderBy('timestamp')
+          .get();
+      for (var doc in snapshot.docs) {
+        final messageData = doc.data();
+        messageData['id'] = doc.id;
+        await _insertOrUpdateMessage(messageData);
+      }
+    } catch (e) {
+      debugPrint(
+          'Failed to sync messages for conversation $conversationId: $e');
+      throw Exception('Failed to sync messages: $e');
+    }
+  }
 
   Future<List<Map<String, dynamic>>> getMessagesBetween(
       String userId1, String userId2) async {
@@ -968,39 +978,41 @@ Future<void> syncMessagesForConversation(String conversationId) async {
       debugPrint('Failed to fetch messages: $e');
       throw Exception('Failed to fetch messages: $e');
     }
-  } 
+  }
 
   Future<List<Map<String, dynamic>>> getMessagesByConversationId(
-    String conversationId) async {
-  try {
-    if (kIsWeb) {
-      final finder = sembast.Finder(
-        filter: sembast.Filter.equals('conversation_id', conversationId),
-        sortOrders: [sembast.SortOrder('created_at')],
-      );
-      final records = await _messageStore.find(await database, finder: finder);
-      return records.map((r) {
-        final messageData = Map<String, dynamic>.from(r.value);
-        messageData['id'] = r.key.toString();
-        return _normalizeMessageData(messageData);
-      }).toList();
-    } else {
-      final db = await database as sqflite.Database;
-      final result = await db.query(
-        'messages',
-        where: 'conversation_id = ?',
-        whereArgs: [conversationId],
-        orderBy: 'created_at ASC',
-      );
-      return result
-          .map((r) => _normalizeMessageData(Map<String, dynamic>.from(r)))
-          .toList();
+      String conversationId) async {
+    try {
+      if (kIsWeb) {
+        final finder = sembast.Finder(
+          filter: sembast.Filter.equals('conversation_id', conversationId),
+          sortOrders: [sembast.SortOrder('created_at')],
+        );
+        final records =
+            await _messageStore.find(await database, finder: finder);
+        return records.map((r) {
+          final messageData = Map<String, dynamic>.from(r.value);
+          messageData['id'] = r.key.toString();
+          return _normalizeMessageData(messageData);
+        }).toList();
+      } else {
+        final db = await database as sqflite.Database;
+        final result = await db.query(
+          'messages',
+          where: 'conversation_id = ?',
+          whereArgs: [conversationId],
+          orderBy: 'created_at ASC',
+        );
+        return result
+            .map((r) => _normalizeMessageData(Map<String, dynamic>.from(r)))
+            .toList();
+      }
+    } catch (e) {
+      debugPrint(
+          'Failed to fetch messages for conversation $conversationId: $e');
+      throw Exception('Failed to fetch messages: $e');
     }
-  } catch (e) {
-    debugPrint('Failed to fetch messages for conversation $conversationId: $e');
-    throw Exception('Failed to fetch messages: $e');
   }
-}
 
   Future<List<Map<String, dynamic>>> getConversationsForUser(
       String userId) async {
@@ -1079,16 +1091,15 @@ Future<void> syncMessagesForConversation(String conversationId) async {
     if (messageId.isEmpty) throw Exception('Message ID cannot be empty');
 
     try {
-      final sortedIds = [messageData['sender_id'], messageData['receiver_id']]
-        ..sort();
-      final conversationId = sortedIds.join('_');
+      final conversationId = messageData['conversation_id'] ?? '';
+      if (conversationId.isEmpty) throw Exception('Conversation ID cannot be empty');
+
       await _firestore
           .collection('conversations')
           .doc(conversationId)
           .collection('messages')
           .doc(messageId)
-          .set({
-        'id': messageId,
+          .update({
         'sender_id': messageData['sender_id'],
         'receiver_id': messageData['receiver_id'],
         'message': messageData['message'],
@@ -1103,15 +1114,59 @@ Future<void> syncMessagesForConversation(String conversationId) async {
         'read_at': messageData['read_at'],
         'scheduled_at': messageData['scheduled_at'],
         'delete_after': messageData['delete_after'],
-      }, firestore.SetOptions(merge: true));
+      });
 
-      await _insertOrUpdateMessage(messageData);
+      if (kIsWeb) {
+        await _messageStore.record(messageId).update(await database, messageData);
+      } else {
+        final db = await database as sqflite.Database;
+        final updates = Map<String, dynamic>.from(messageData)
+          ..remove('id')
+          ..update('reactions', (value) => jsonEncode(value), ifAbsent: () => '{}');
+        final result = await db.update(
+          'messages',
+          updates,
+          where: 'id = ?',
+          whereArgs: [messageId],
+        );
+        if (result == 0) {
+          debugPrint('No message found with id: $messageId to update');
+        }
+      }
+
       return messageId;
     } catch (e) {
       debugPrint('Failed to update message: $e');
       throw Exception('Failed to update message: $e');
     }
   }
+
+  Future<Map<String, dynamic>?> getLastMessage(String conversationId) async {
+  try {
+    final db = await database; // Assuming `database` is your Sqflite database getter
+    final result = await db.query(
+      'messages',
+      where: 'conversation_id = ?',
+      whereArgs: [conversationId],
+      orderBy: 'timestamp DESC',
+      limit: 1,
+    );
+    if (result.isNotEmpty) {
+      return {
+        'message': result.first['message'],
+        'sender_id': result.first['sender_id'],
+        'type': result.first['type'],
+        'iv': result.first['iv'],
+        'is_read': result.first['is_read'] == 1 ? true : false,
+        'timestamp': result.first['timestamp'],
+      };
+    }
+    return null;
+  } catch (e) {
+    debugPrint('Error fetching last message from local database: $e');
+    return null;
+  }
+}
 
   Future<void> insertConversation(Map<String, dynamic> conversation) async {
     final conversationData = Map<String, dynamic>.from(conversation);
@@ -1188,8 +1243,9 @@ Future<void> syncMessagesForConversation(String conversationId) async {
   Future<void> updateConversation(Map<String, dynamic> conversation) async {
     final conversationData = Map<String, dynamic>.from(conversation);
     final conversationId = conversationData['id']?.toString() ?? '';
-    if (conversationId.isEmpty)
+    if (conversationId.isEmpty) {
       throw Exception('Conversation ID cannot be empty');
+    }
 
     try {
       await _firestore
@@ -1313,8 +1369,7 @@ Future<void> syncMessagesForConversation(String conversationId) async {
       'avatar': user['avatar']?.toString() ?? 'https://via.placeholder.com/200',
     };
 
-    final userId =
-        userData['id'] as String; // Assert non-null since _uuid.v4() ensures it
+    final userId = userData['id'] as String;
     if (userId.isEmpty) throw Exception('User ID cannot be empty');
 
     try {
@@ -1352,24 +1407,31 @@ Future<void> syncMessagesForConversation(String conversationId) async {
     }
   }
 
-  Future<Map<String, dynamic>?> getUserById(String id) async {
-    try {
-      if (kIsWeb) {
-        final record = await _userStore.record(id).get(await database);
-        return record != null ? _normalizeUserData(record) : null;
-      } else {
-        final db = await database as sqflite.Database;
-        final result =
-            await db.query('users', where: 'id = ?', whereArgs: [id]);
-        return result.isNotEmpty
-            ? _normalizeUserData(Map<String, dynamic>.from(result.first))
-            : null;
-      }
-    } catch (e) {
-      debugPrint('Failed to get user by ID $id: $e');
-      throw Exception('Failed to get user by ID: $e');
-    }
+Future<Map<String, dynamic>?> getUserById(String id) async {
+  if (id.isEmpty) {
+    debugPrint('Empty ID provided to getUserById');
+    return null; // Or throw an exception
   }
+  try {
+    if (kIsWeb) {
+      final record = await _userStore.record(id).get(await database);
+      if (record != null) {
+        return _normalizeUserData(record);
+      }
+      return {'id': id, 'username': 'Unknown'};
+    } else {
+      final db = await database as sqflite.Database;
+      final result = await db.query('users', where: 'id = ?', whereArgs: [id]);
+      if (result.isNotEmpty) {
+        return _normalizeUserData(Map<String, dynamic>.from(result.first));
+      }
+      return {'id': id, 'username': 'Unknown'};
+    }
+  } catch (e) {
+    debugPrint('Failed to get user by ID $id: $e');
+    return {'id': id, 'username': 'Unknown'};
+  }
+}
 
   Future<String> updateUser(Map<String, dynamic> user) async {
     final userData = _normalizeUserData({
@@ -1457,11 +1519,9 @@ Future<void> syncMessagesForConversation(String conversationId) async {
     }
   }
 
-  // Remove unused method
   Future<List<Map<String, dynamic>>> fetchedSMergedMessages(
       String senderId, String receiverId) async {
     throw UnimplementedError(
         'This method is deprecated. Use getMessagesBetween instead.');
   }
 }
-
