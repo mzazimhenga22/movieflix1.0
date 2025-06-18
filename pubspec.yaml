@@ -84,6 +84,7 @@ dependencies:
   share_plus: ^10.1.4
   shelf: ^1.4.2
   shelf_static: ^1.1.2
+  connectivity_plus: ^6.1.4
 
   # State Management
   provider: ^6.1.4
@@ -129,3 +130,4 @@ flutter_launcher_icons:
   image_path: "assets/icon/movieflixiconv1.png"
   adaptive_icon_background: "#ffffff"
   adaptive_icon_foreground: "assets/icon/movieflixiconv1.png"
+
